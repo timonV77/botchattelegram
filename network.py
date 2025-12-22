@@ -74,7 +74,7 @@ async def process_with_ai(image_url: str, prompt: str, model_type: str):
         ],
         "modalities": ["image", "text"],
         "image_config": {"aspect_ratio": "1:1"},
-        "max_tokens": 1024
+        "max_tokens": 128
     }
 
     try:

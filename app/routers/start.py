@@ -13,3 +13,7 @@ async def start_cmd(message: types.Message, state: FSMContext):
         "Отправь мне фото, выбери стиль и получи шедевр!",
         reply_markup=main_kb()
     )
+    await message.answer(text, reply_markup=main_kb())
+
+    file = FSInputFile("assets/offer.pdf")
+    await message.answer_document(file, caption="Продолжая пользоваться ботом, вы даете свое согласие с условиями данной оферты.")

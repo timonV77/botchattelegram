@@ -35,26 +35,23 @@ async def _download_content_bytes(url: str):
 
 
 async def process_with_polza(prompt: str, model_type: str, image_url: str = None):
-    """Генерация фото с сохранением оригинальных пропорций"""
+    """Генерация фото (Image-to-Image)"""
     if not POLZA_API_KEY:
         return None, None
 
     model_id = MODELS_MAP.get(model_type)
     headers = {"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"}
 
-    # Базовый запрос
     payload = {
         "model": model_id,
-        "prompt": f"{prompt} (High quality photo edit, photorealistic)",
+        "prompt": f"{prompt} (High quality photo, photorealistic)",
     }
 
-    # Если передано изображение, добавляем его и параметр силы изменений
     if image_url:
         payload["filesUrl"] = [image_url]
         payload["strength"] = 0.7
 
-    # ИСПРАВЛЕНИЕ: Убрали принудительные "size": "1:1" и "aspect_ratio": "1:1"
-    # Теперь API Polza будет использовать пропорции входного файла
+    # Дополнительные настройки для Pro модели
     if model_type == "nanabanana_pro":
         payload.update({"resolution": "1K"})
 
@@ -64,40 +61,37 @@ async def process_with_polza(prompt: str, model_type: str, image_url: str = None
                 data = await resp.json()
                 request_id = data.get("requestId")
                 if not request_id:
-                    print(f"❌ Ошибка API (фото): {data}")
+                    print(f"❌ Ошибка API фото (запрос): {data}")
                     return None, None
 
-            # Ожидание готовности
             for i in range(60):
                 await asyncio.sleep(4)
                 async with session.get(f"{BASE_URL}/images/{request_id}", headers=headers) as s_resp:
                     if s_resp.status != 200: continue
                     result = await s_resp.json()
 
-                    # Проверяем URL в разных полях ответа
+                    # Ищем ссылку во всех возможных полях
                     res_url = result.get("url") or (result.get("images")[0] if result.get("images") else None)
 
                     if res_url:
                         return await _download_content_bytes(res_url)
 
                     if result.get("status") in ["error", "failed"]:
-                        print(f"❌ Нейросеть вернула ошибку: {result}")
+                        print(f"❌ Ошибка генерации фото: {result}")
                         break
     except Exception as e:
         print(f"❌ Ошибка в network (фото): {e}")
     return None, None
 
 
-# --- ФУНКЦИЯ ДЛЯ KLING 2.5 (Видео) ---
+# --- ОБНОВЛЕННАЯ ФУНКЦИЯ ДЛЯ ВИДЕО (KLING 2.5) ---
 
 async def process_video_polza(prompt: str, image_url: str, duration: int):
-    """Генерация видео Kling 2.5 (Image-to-Video)"""
+    """Генерация видео с исправленным поиском ссылки при COMPLETED"""
     if not POLZA_API_KEY:
         return None, None
 
     headers = {"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"}
-
-    # Kling 2.5 автоматически подхватывает пропорции из imageUrls
     payload = {
         "model": "kling2.5-image-to-video",
         "prompt": prompt,
@@ -112,31 +106,52 @@ async def process_video_polza(prompt: str, image_url: str, duration: int):
                 data = await resp.json()
                 request_id = data.get("requestId")
                 if not request_id:
-                    print(f"❌ Видео API ошибка: {data}")
+                    print(f"❌ Видео API ошибка (старт): {data}")
                     return None, None
 
-            print(f"⏳ Видео {request_id} создано. Ожидание генерации...")
+            print(f"⏳ Видео {request_id} создано. Начинаю опрос статуса...")
 
             for i in range(300):
                 await asyncio.sleep(5)
                 async with session.get(f"{BASE_URL}/videos/{request_id}", headers=headers) as s_resp:
-                    if s_resp.status != 200: continue
+                    if s_resp.status != 200:
+                        continue
+
                     result = await s_resp.json()
                     status = result.get("status")
 
                     if i % 6 == 0:
                         print(f"LOG: Видео {request_id} статус -> {status}")
 
-                    video_url = result.get("videoUrl") or (
-                        result.get("result") if isinstance(result.get("result"), str) else None)
+                    # --- УЛУЧШЕННЫЙ ПОИСК ССЫЛКИ ---
+                    # Проверяем все возможные ключи
+                    video_url = (
+                            result.get("videoUrl") or
+                            result.get("url") or
+                            (result.get("result") if isinstance(result.get("result"), str) else None)
+                    )
 
-                    if video_url:
-                        print(f"✅ Видео готово!")
-                        return await _download_content_bytes(video_url)
+                    # Если ссылка не найдена в основных полях, проверяем списки
+                    if not video_url:
+                        res_data = result.get("images") or result.get("videos") or result.get("result")
+                        if isinstance(res_data, list) and len(res_data) > 0:
+                            video_url = res_data[0]
+
+                    # Если статус завершен успешно
+                    if status in ["COMPLETED", "success"]:
+                        if video_url:
+                            print(f"✅ Ссылка найдена: {video_url}. Скачиваю...")
+                            return await _download_content_bytes(video_url)
+                        else:
+                            # Статус готов, но ссылка еще "долетает" до API
+                            print(f"⚠️ Статус {status}, но URL еще не появился. Ждем...")
+                            continue
 
                     if status in ["error", "failed"]:
                         print(f"❌ Ошибка Kling: {result}")
                         break
+
+            print(f"⚠️ Видео {request_id} завершилось по таймауту.")
 
     except Exception as e:
         print(f"❌ Ошибка в network (видео): {e}")

@@ -10,10 +10,9 @@ BASE_URL = "https://api.polza.ai/api/v1"
 
 MODELS_MAP = {
     "nanabanana": "nano-banana",
-    "nanabanana_pro": "google/gemini-3-pro-image-preview",
-    "seadream": "seedream-v4.5"  # Обновлено на v4.5
+    "nanabanana_pro": "gemini-3-pro-image-preview", # ИСПРАВЛЕНО (убрали google/)
+    "seadream": "seedream-v4.5"
 }
-
 
 async def _download_image_bytes(url: str):
     async with aiohttp.ClientSession() as s:
@@ -23,7 +22,6 @@ async def _download_image_bytes(url: str):
                 ext = "jpg" if "jpeg" in content_type else "png"
                 return await r.read(), ext
     return None, None
-
 
 async def process_with_polza(prompt: str, model_type: str, image_url: str = None):
     if not POLZA_API_KEY:
@@ -36,7 +34,6 @@ async def process_with_polza(prompt: str, model_type: str, image_url: str = None
     }
 
     # Чтобы модель не "сходила с ума", делаем промпт четким
-    # Совмещаем русский и английский для точности
     payload = {
         "model": model_id,
         "prompt": f"{prompt} (High quality photo edit, photorealistic)",
@@ -44,13 +41,13 @@ async def process_with_polza(prompt: str, model_type: str, image_url: str = None
 
     if image_url:
         payload["filesUrl"] = [image_url]
-        # Параметр влияния: чем выше, тем БОЛЬШЕ изменений.
-        # Если выдает "не то" — попробуй снизить до 0.5. Если "не меняет" — оставь 0.7-0.8.
+        # Если модель всё равно плохо меняет фото, подними strength до 0.8
         payload["strength"] = 0.7
 
-        # Настройка размеров по твоим справочникам
+    # ИСПРАВЛЕНО: Теперь настройки размеров применяются ВСЕГДА (убрали лишний отступ)
     if model_type == "nanabanana_pro":
         payload["aspect_ratio"] = "1:1"
+        payload["resolution"] = "1K" # Добавили по доке
     elif model_type == "seadream":
         payload["size"] = "1:1"
         payload["imageResolution"] = "1K"
@@ -63,7 +60,7 @@ async def process_with_polza(prompt: str, model_type: str, image_url: str = None
             async with session.post(f"{BASE_URL}/images/generations", headers=headers, json=payload) as resp:
                 data = await resp.json()
                 if resp.status not in [200, 201]:
-                    print(f"❌ Ошибка API: {data}")
+                    print(f"❌ Ошибка API Polza: {data}")
                     return None, None
 
                 request_id = data.get("requestId")
@@ -79,18 +76,19 @@ async def process_with_polza(prompt: str, model_type: str, image_url: str = None
 
                     result = await s_resp.json()
 
-                    # Ищем ссылку в разных полях
+                    # Ищем ссылку
                     res_url = (
-                            result.get("url") or
-                            (result.get("images")[0] if result.get("images") else None) or
-                            (result.get("result", {}).get("url") if isinstance(result.get("result"), dict) else None)
+                        result.get("url") or
+                        (result.get("images")[0] if result.get("images") else None) or
+                        (result.get("result", {}).get("url") if isinstance(result.get("result"), dict) else None)
                     )
 
                     if res_url:
+                        print(f"✅ Успешно получена ссылка на итерации {i+1}")
                         return await _download_image_bytes(res_url)
 
                     if result.get("status") in ["error", "failed"]:
-                        print(f"❌ Ошибка: {result}")
+                        print(f"❌ Polza сообщила об ошибке: {result}")
                         break
 
     except Exception as e:

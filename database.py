@@ -13,18 +13,34 @@ def get_balance(user_id: int):
     response = supabase.table("users").select("balance").eq("user_id", user_id).execute()
 
     if not response.data:
-        # Если пользователь новый — даём 100 токенов
-        supabase.table("users").insert({"user_id": user_id, "balance": 100}).execute()
-        return 100
+        # Если пользователь новый — создаем запись (измени 100 на нужное кол-во приветственных ген.)
+        initial_balance = 100
+        supabase.table("users").insert({"user_id": user_id, "balance": initial_balance}).execute()
+        return initial_balance
 
     return response.data[0]["balance"]
 
-def use_generation(user_id: int):
+
+def update_balance(user_id: int, amount: int):
+    """
+    Универсальная функция изменения баланса.
+    amount может быть положительным (пополнение) или отрицательным (списание).
+    """
     current_balance = get_balance(user_id)
-    if current_balance > 0:
-        supabase.table("users").update({"balance": current_balance - 1}).eq("user_id", user_id).execute()
+    new_balance = current_balance + amount
+
+    # Чтобы баланс не уходил в минус (на всякий случай)
+    if new_balance < 0:
+        new_balance = 0
+
+    return supabase.table("users").update({"balance": new_balance}).eq("user_id", user_id).execute()
+
+
+def use_generation(user_id: int):
+    """Старая функция для совместимости (вычитает 1)"""
+    return update_balance(user_id, -1)
 
 
 def add_balance(user_id: int, count: int):
-    current_balance = get_balance(user_id)
-    supabase.table("users").update({"balance": current_balance + count}).eq("user_id", user_id).execute()
+    """Старая функция для совместимости (прибавляет count)"""
+    return update_balance(user_id, count)

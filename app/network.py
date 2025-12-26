@@ -5,9 +5,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 POLZA_API_KEY = os.getenv("POLZA_API_KEY")
-API_URL = "https://api.polza.ai/v1/images/generations"  # Проверь этот URL в доках Polza
+API_URL = "https://api.polza.ai/v1/images/generations"
 
-# Актуальные ID моделей по твоему списку
 MODELS_MAP = {
     "nanabanana": "nano-banana",
     "nanabanana_pro": "google/gemini-3-pro-image-preview",
@@ -18,10 +17,13 @@ MODELS_MAP = {
 async def _download_image_bytes(url: str):
     async with aiohttp.ClientSession() as s:
         async with s.get(url, timeout=120) as r:
+            # Здесь используем переменную r (наш ответ от гет-запроса)
             if r.status == 200:
                 content_type = r.headers.get("Content-Type", "").lower()
                 ext = "jpg" if "jpeg" in content_type else "png"
                 return await r.read(), ext
+            else:
+                print(f"❌ Ошибка при скачивании картинки: {r.status}")
     return None, None
 
 
@@ -48,24 +50,33 @@ async def process_with_polza(prompt: str, model_type: str, image_url: str = None
         "response_format": "url"
     }
 
-    # Если бот передает референсное фото
     if image_url:
         payload["image_url"] = image_url
 
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(API_URL, headers=headers, json=payload, timeout=300) as resp:
-                if resp.status != 200:
-                    print(f"❌ Polza Error: {resp.status}")
+                # Теперь мы корректно обрабатываем 201 Created
+                if resp.status not in [200, 201]:
+                    err_text = await resp.text()
+                    print(f"❌ Polza Error: {resp.status} | {err_text}")
                     return None, None
 
                 data = await resp.json()
-                # Пытаемся достать URL (проверь формат ответа Polza AI)
-                res_url = data.get("image_url") or data.get("data", [{}])[0].get("url")
+                # Печатаем ответ, чтобы точно знать структуру, если картинка не придет
+                print(f"DEBUG Polza Response: {data}")
+
+                # Проверяем разные варианты ключей в JSON
+                res_url = data.get("image_url") or data.get("url")
+                if not res_url and "data" in data:
+                    res_url = data["data"][0].get("url")
 
                 if res_url:
                     return await _download_image_bytes(res_url)
+                else:
+                    print("❌ URL картинки не найден в ответе API")
+
     except Exception as e:
-        print(f"❌ Ошибка сети: {e}")
+        print(f"❌ Ошибка сети или JSON: {e}")
 
     return None, None

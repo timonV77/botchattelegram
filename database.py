@@ -13,8 +13,9 @@ def get_balance(user_id: int):
     response = supabase.table("users").select("balance").eq("user_id", user_id).execute()
 
     if not response.data:
-        # Если пользователь новый — создаем запись (измени 100 на нужное кол-во приветственных ген.)
-        initial_balance = 100
+        # Если пользователя нет в базе — это его первый вход.
+        # Дарим ровно 1 приветственную генерацию.
+        initial_balance = 1
         supabase.table("users").insert({"user_id": user_id, "balance": initial_balance}).execute()
         return initial_balance
 

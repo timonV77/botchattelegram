@@ -11,6 +11,13 @@ import database as db
 
 router = Router()
 
+# Словарь для красивого отображения моделей
+MODEL_NAMES = {
+    "nanabanana": "🍌 Nano Banana",
+    "nanabanana_pro": "💎 Nano Banana PRO",
+    "seadream": "🎨 SeaDream 4.5"
+}
+
 
 @router.message(F.text == "❌ Отменить")
 async def cancel_text(message: types.Message, state: FSMContext):
@@ -26,26 +33,30 @@ async def start_photo(message: types.Message, state: FSMContext):
     if db.get_balance(user_id) < 1:
         return await message.answer("❌ У вас недостаточно генераций.")
 
-    await message.answer("🖼 Пришлите фотографию, которую хотите изменить:", reply_markup=cancel_kb())
+    await message.answer("🖼 **Пришлите фотографию**, которую хотите изменить:", reply_markup=cancel_kb(),
+                         parse_mode="Markdown")
     await state.set_state(PhotoProcess.waiting_for_photo)
 
 
 @router.message(PhotoProcess.waiting_for_photo, F.photo)
 async def on_photo(message: types.Message, state: FSMContext):
     await state.update_data(photo_id=message.photo[-1].file_id)
-    await message.answer("🤖 Выберите нейросеть для обработки:", reply_markup=model_inline())
+    await message.answer("🤖 **Выберите нейросеть для обработки:**", reply_markup=model_inline(), parse_mode="Markdown")
     await state.set_state(PhotoProcess.waiting_for_model)
 
 
 @router.callback_query(F.data.startswith("model_"))
 async def on_model(callback: types.CallbackQuery, state: FSMContext):
-    model = callback.data.replace("model_", "")
-    await state.update_data(chosen_model=model)
-    model_display = model.replace("_", " ").upper()
+    model_key = callback.data.replace("model_", "")
+    await state.update_data(chosen_model=model_key)
 
-    await callback.message.edit_text(f"✅ Выбрана модель: **{model_display}**", parse_mode="Markdown")
-    await callback.message.answer(
-        "✍️ **Введите описание изменений:**\nНапишите, что именно добавить или изменить.",
+    # Получаем красивое название из словаря
+    nice_name = MODEL_NAMES.get(model_key, model_key.replace("_", " ").title())
+
+    await callback.message.edit_text(
+        f"🎯 **Выбрана модель:** {nice_name}\n\n"
+        f"✍️ **Введите описание изменений:**\n"
+        f"Напишите максимально подробно, что именно добавить или изменить на фото.",
         reply_markup=cancel_kb(),
         parse_mode="Markdown"
     )
@@ -64,9 +75,11 @@ async def on_prompt(message: types.Message, state: FSMContext):
 
     if not has_balance(user_id, cost):
         await state.clear()
-        return await message.answer(f"❌ Нужно {cost} ген.", reply_markup=main_kb())
+        return await message.answer(f"❌ Недостаточно средств. Нужно {cost} ген.", reply_markup=main_kb())
 
-    status_msg = await message.answer(f"🚀 Генерация {model.upper()}...", parse_mode="Markdown")
+    nice_name = MODEL_NAMES.get(model, model)
+    status_msg = await message.answer(f"🚀 **Запускаю магию {nice_name}...**\nПожалуйста, подождите.",
+                                      parse_mode="Markdown")
 
     try:
         photo_url = await get_telegram_photo_url(message.bot, data["photo_id"])
@@ -77,16 +90,20 @@ async def on_prompt(message: types.Message, state: FSMContext):
             file = BufferedInputFile(img_bytes, filename=f"res.{ext or 'png'}")
             await message.answer_photo(
                 photo=file,
-                caption=f"✨ **Готово!**\n💰 Списано: {cost} ген.\n🔋 Баланс: {db.get_balance(user_id)} ген.",
+                caption=(
+                    f"✨ **Ваше фото готово!**\n\n"
+                    f"💰 Списано: `{cost}` ⚡\n"
+                    f"🔋 Баланс: `{db.get_balance(user_id)}` ⚡"
+                ),
                 reply_markup=main_kb(),
                 parse_mode="Markdown"
             )
             await state.clear()
         else:
-            await message.answer("❌ Ошибка нейросети. Попробуйте другой промпт.", reply_markup=main_kb())
+            await message.answer("❌ Ошибка нейросети. Попробуйте другой запрос или модель.", reply_markup=main_kb())
     except Exception as e:
         print(f"❌ Error in photo: {e}")
-        await message.answer("❌ Ошибка системы. Баланс сохранен.")
+        await message.answer("❌ Произошла ошибка системы. Ваш баланс не был списан.")
     finally:
         try:
             await status_msg.delete()
@@ -99,12 +116,12 @@ async def on_prompt(message: types.Message, state: FSMContext):
 @router.message(F.text == "🎬 Оживить фото")
 async def start_video(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
-    print(f"DEBUG: Пользователь {user_id} инициировал Kling")
 
     if db.get_balance(user_id) < 5:
         return await message.answer("❌ Для оживления видео нужно минимум 5 генераций.")
 
-    await message.answer("🎬 Пришлите фото, которое вы хотите оживить:", reply_markup=cancel_kb())
+    await message.answer("📸 **Пришлите фото**, которое вы хотите оживить:", reply_markup=cancel_kb(),
+                         parse_mode="Markdown")
     await state.set_state(PhotoProcess.waiting_for_video_photo)
 
 
@@ -116,7 +133,7 @@ async def on_video_photo(message: types.Message, state: FSMContext):
         [InlineKeyboardButton(text="5 секунд (5 ⚡)", callback_data="v_dur_5")],
         [InlineKeyboardButton(text="10 секунд (10 ⚡)", callback_data="v_dur_10")]
     ])
-    await message.answer("⏳ Выберите длительность видео:", reply_markup=kb)
+    await message.answer("⏳ **Выберите желаемую длительность видео:**", reply_markup=kb, parse_mode="Markdown")
     await state.set_state(PhotoProcess.waiting_for_duration)
 
 
@@ -126,7 +143,8 @@ async def on_duration(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(duration=duration)
 
     await callback.message.edit_text(
-        f"✅ Длительность: **{duration} сек**.\n\n✍️ Опишите движение (например: 'человек смеется'):",
+        f"✅ Длительность: **{duration} сек**.\n\n"
+        f"✍️ **Опишите движение на видео:**\nНапример: 'девушка плавно поворачивает голову и улыбается'.",
         parse_mode="Markdown"
     )
     await state.set_state(PhotoProcess.waiting_for_video_prompt)
@@ -145,36 +163,36 @@ async def on_video_prompt(message: types.Message, state: FSMContext):
     cost = cost_for(model_key)
 
     if not has_balance(user_id, cost):
-        return await message.answer(f"❌ Нужно {cost} ген.", reply_markup=main_kb())
+        return await message.answer(f"❌ Недостаточно средств. Нужно {cost} ген.", reply_markup=main_kb())
 
     status_msg = await message.answer(
-        f"🎬 Оживляю фото (Kling 2.5, {duration}с)...\nПроцесс может занять до 20 минут. Ожидайте.",
+        f"🎬 **Оживляю фото (Kling 2.5, {duration}с)...**\n\n"
+        f"⏳ Процесс может занять до 20 минут из-за высокой очереди. Я пришлю результат сюда!",
         parse_mode="Markdown"
     )
 
-    print(f"DEBUG: Старт генерации видео для {user_id}. Промпт: {message.text}")
-
     try:
         photo_url = await get_telegram_photo_url(message.bot, data["photo_id"])
-        # Вызываем функцию из generation.py
         video_bytes, ext = await generate_video(photo_url, message.text, duration)
 
         if video_bytes:
-            print(f"DEBUG: Видео получено для {user_id}")
             charge(user_id, cost)
             video_file = BufferedInputFile(video_bytes, filename=f"video_{user_id}.mp4")
 
             await message.answer_video(
                 video=video_file,
-                caption=f"✅ Видео готово!\n💰 Списано: {cost} ген.\n🔋 Баланс: {db.get_balance(user_id)} ген.",
+                caption=(
+                    f"✅ **Ваше видео готово!**\n\n"
+                    f"💰 Списано: `{cost}` ⚡\n"
+                    f"🔋 Баланс: `{db.get_balance(user_id)}` ⚡"
+                ),
                 reply_markup=main_kb(),
                 parse_mode="Markdown"
             )
             await state.clear()
         else:
-            print(f"DEBUG: Видео НЕ получено (Таймаут/Ошибка) для {user_id}")
             await message.answer(
-                "⚠️ Не удалось дождаться видео. Вероятно, сервер перегружен. Попробуйте позже.",
+                "⚠️ Не удалось дождаться генерации видео. Сервер перегружен, попробуйте позже.",
                 reply_markup=main_kb()
             )
     except Exception as e:

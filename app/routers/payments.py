@@ -1,38 +1,70 @@
 from aiogram import Router, types, F
-from aiogram.types import LabeledPrice, PreCheckoutQuery
-from app.keyboards.inline import buy_inline
-from app.keyboards.reply import main_kb
-from app.config import get_settings
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from urllib.parse import urlencode
+from app.bot import bot
 import database as db
 
 router = Router()
-settings = get_settings()
+
+# ЗАМЕНИТЕ НА ВАШ РЕАЛЬНЫЙ АДРЕС ПРОДАМУСА
+PRODAMUS_BASE_URL = "https://ai-photo-nano.payform.ru/"
+
 
 @router.message(F.text == "💳 Пополнить")
-async def buy(message: types.Message):
-    await message.answer("Выберите пакет генераций:", reply_markup=buy_inline())
+async def show_deposit_menu(message: types.Message):
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="10 ген. — 149₽", callback_data="pay_10_149")],
+        [types.InlineKeyboardButton(text="25 ген. — 375₽", callback_data="pay_25_375")],
+        [types.InlineKeyboardButton(text="45 ген. — 675₽", callback_data="pay_45_675")],
+        [types.InlineKeyboardButton(text="60 ген. — 900₽", callback_data="pay_60_900")],
+    ])
+
+    await message.answer(
+        "⚡ **Выберите пакет генераций для покупки:**\n\n"
+        "После выбора тарифа вы получите ссылку на защищенную оплату.",
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
+
 
 @router.callback_query(F.data.startswith("pay_"))
-async def invoice(callback: types.CallbackQuery):
-    _, count, price = callback.data.split("_")
-    count, price = int(count), int(price)
-    prices = [LabeledPrice(label=f"{count} генераций", amount=price * 100)]
-    await callback.message.answer_invoice(
-        title="Пополнение баланса",
-        description=f"Пакет на {count} нейро-фотосессий",
-        prices=prices,
-        provider_token=settings.payment_token,
-        payload=f"refill_{count}",
-        currency="RUB"
+async def create_payment_link(callback: types.CallbackQuery):
+    # Разбираем callback: pay_10_149 -> amount=10, price=149
+    _, amount, price = callback.data.split("_")
+    user_id = callback.from_user.id
+
+    # Формируем параметры запроса по документации Продамуса
+    params = {
+        "do": "pay",
+        "order_id": f"{user_id}_{amount}",  # Склеиваем ID юзера и кол-во генов
+        "products[0][name]": f"Пополнение {amount} генераций",
+        "products[0][price]": price,
+        "products[0][quantity]": 1,
+        "customer_extra": f"User ID: {user_id}",
+        "sys": "telegram_bot"
+    }
+
+    # Собираем финальную ссылку
+    payment_url = f"{PRODAMUS_BASE_URL}/?{urlencode(params)}"
+
+    # Создаем кнопку для перехода к оплате
+    pay_kb = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="💳 Оплатить заказ", url=payment_url)],
+        [types.InlineKeyboardButton(text="⬅️ Назад к тарифам", callback_data="back_to_tariffs")]
+    ])
+
+    await callback.message.edit_text(
+        f"💎 **Ваш заказ:** {amount} генераций\n"
+        f"💰 **К оплате:** {price}₽\n\n"
+        "Нажмите на кнопку ниже, чтобы перейти на страницу оплаты:",
+        reply_markup=pay_kb,
+        parse_mode="Markdown"
     )
     await callback.answer()
 
-@router.pre_checkout_query()
-async def pre_checkout(pre_checkout_q: PreCheckoutQuery):
-    await pre_checkout_q.bot.answer_pre_checkout_query(pre_checkout_q.id, ok=True)
 
-@router.message(F.successful_payment)
-async def successful_payment(message: types.Message):
-    count = int(message.successful_payment.invoice_payload.split("_")[1])
-    db.add_balance(message.from_user.id, count)
-    await message.answer(f"✅ Успешно! Начислено {count} генераций.", reply_markup=main_kb())
+@router.callback_query(F.data == "back_to_tariffs")
+async def back_to_tariffs(callback: types.CallbackQuery):
+    # Позволяет вернуться к выбору тарифов
+    await show_deposit_menu(callback.message)
+    await callback.answer()

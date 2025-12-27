@@ -8,58 +8,51 @@ url: str = os.getenv("SUPABASE_URL")
 key: str = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(url, key)
 
+
 def get_users_count():
-    """
-    Возвращает общее количество пользователей в таблице users.
-    Использует встроенный в Supabase метод подсчета строк.
-    """
+    """Возвращает общее количество пользователей в таблице users."""
     try:
-        # Запрашиваем данные с параметром count='exact', чтобы получить общее число строк
         response = supabase.table("users").select("*", count="exact").execute()
         return response.count if response.count is not None else 0
     except Exception as e:
         print(f"❌ Ошибка Supabase при подсчете пользователей: {e}")
         return 0
 
+
 def get_balance(user_id: int):
-    response = supabase.table("users").select("balance").eq("user_id", user_id).execute()
+    """Получает баланс. Если пользователя нет — создает его."""
+    try:
+        response = supabase.table("users").select("balance").eq("user_id", user_id).execute()
 
-    if not response.data:
-        # Если пользователя нет в базе — это его первый вход.
-        # Дарим ровно 1 приветственную генерацию.
-        initial_balance = 1
-        supabase.table("users").insert({"user_id": user_id, "balance": initial_balance}).execute()
-        return initial_balance
+        if not response.data:
+            # Если пользователя нет, создаем запись.
+            # Поле referrer_id будет NULL по умолчанию, если не было заполнено функцией set_referrer ранее.
+            initial_balance = 1
+            supabase.table("users").insert({"user_id": user_id, "balance": initial_balance}).execute()
+            return initial_balance
 
-    return response.data[0]["balance"]
+        return response.data[0]["balance"]
+    except Exception as e:
+        print(f"❌ Ошибка get_balance: {e}")
+        return 0
 
 
 def update_balance(user_id: int, amount: int):
-    """
-    Универсальная функция изменения баланса.
-    amount может быть положительным (пополнение) или отрицательным (списание).
-    """
+    """Универсальная функция изменения баланса."""
     current_balance = get_balance(user_id)
-    new_balance = current_balance + amount
-
-    # Чтобы баланс не уходил в минус (на всякий случай)
-    if new_balance < 0:
-        new_balance = 0
-
+    new_balance = max(0, current_balance + amount)
     return supabase.table("users").update({"balance": new_balance}).eq("user_id", user_id).execute()
 
 
 def use_generation(user_id: int):
-    """Старая функция для совместимости (вычитает 1)"""
     return update_balance(user_id, -1)
 
 
 def add_balance(user_id: int, count: int):
-    """Старая функция для совместимости (прибавляет count)"""
     return update_balance(user_id, count)
 
+
 def log_payment(user_id: int, amount: int, status: str, order_id: str, raw_data: dict):
-    """Записывает данные о платеже в таблицу payment_logs"""
     return supabase.table("payment_logs").insert({
         "user_id": user_id,
         "amount": amount,
@@ -70,26 +63,44 @@ def log_payment(user_id: int, amount: int, status: str, order_id: str, raw_data:
 
 
 def set_referrer(user_id: int, referrer_id: int):
-    """Связывает пользователя с тем, кто его пригласил"""
-    # Проверяем, что пользователь не приглашает сам себя
     if user_id == referrer_id:
         return
 
-    # Проверяем, нет ли у пользователя уже реферера (чтобы нельзя было сменить)
-    user_data = supabase.table("users").select("referrer_id").eq("user_id", user_id).execute()
-    if user_data.data and user_data.data[0].get("referrer_id") is None:
-        return supabase.table("users").update({"referrer_id": referrer_id}).eq("user_id", user_id).execute()
+    try:
+        # Проверяем, есть ли уже такой юзер
+        res = supabase.table("users").select("referrer_id").eq("user_id", user_id).execute()
+
+        if not res.data:
+            # Если юзера ВООБЩЕ нет — создаем его сразу с реферером
+            supabase.table("users").insert({
+                "user_id": user_id,
+                "balance": 1,
+                "referrer_id": referrer_id
+            }).execute()
+        else:
+            # Если юзер есть, но referrer_id пустой (NULL) — обновляем его
+            if res.data[0].get("referrer_id") is None:
+                supabase.table("users").update({"referrer_id": referrer_id}).eq("user_id", user_id).execute()
+    except Exception as e:
+        print(f"ОШИБКА set_referrer: {e}")
 
 
 def get_referrer(user_id: int):
     """Возвращает ID того, кто пригласил этого пользователя"""
-    res = supabase.table("users").select("referrer_id").eq("user_id", user_id).execute()
-    if res.data and res.data[0]["referrer_id"]:
-        return int(res.data[0]["referrer_id"])
+    try:
+        res = supabase.table("users").select("referrer_id").eq("user_id", user_id).execute()
+        if res.data and res.data[0].get("referrer_id"):
+            return int(res.data[0]["referrer_id"])
+    except Exception as e:
+        print(f"❌ Ошибка get_referrer: {e}")
     return None
 
 
 def get_referrals_count(user_id: int):
     """Считает сколько человек пригласил пользователь"""
-    res = supabase.table("users").select("*", count="exact").eq("referrer_id", user_id).execute()
-    return res.count if res.count is not None else 0
+    try:
+        res = supabase.table("users").select("*", count="exact").eq("referrer_id", user_id).execute()
+        return res.count if res.count is not None else 0
+    except Exception as e:
+        print(f"❌ Ошибка get_referrals_count: {e}")
+        return 0

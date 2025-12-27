@@ -16,7 +16,7 @@ PRODAMUS_BASE_URL = os.getenv("PRODAMUS_URL", "https://ai-photo-nano.payform.ru"
 
 # --- ВЕБХУК ДЛЯ ПРИЕМА ОПЛАТ ---
 async def prodamus_webhook(request):
-    """Обработчик уведомлений от Продамуса с анимацией обработки"""
+    """Обработчик уведомлений от Продамуса с анимацией и реферальным бонусом"""
     data = await request.post()
     raw_dict = dict(data)
 
@@ -25,7 +25,6 @@ async def prodamus_webhook(request):
     payment_status = data.get("payment_status")
     order_data = data.get("order_num")
 
-    # Предварительный парсинг для логов
     temp_user_id = None
     temp_amount = 0
     if order_data and "_" in str(order_data):
@@ -47,7 +46,6 @@ async def prodamus_webhook(request):
             amount = temp_amount
 
             # --- АНИМАЦИЯ ОБРАБОТКИ ---
-            # 1. Начало
             status_msg = await bot.send_message(
                 chat_id=user_id,
                 text="⏳ **Платеж получен! Начинаем обработку...**\n`▒▒▒▒▒▒▒▒▒▒ 0%`",
@@ -55,35 +53,56 @@ async def prodamus_webhook(request):
             )
             await asyncio.sleep(0.7)
 
-            # 2. Середина (имитируем проверку транзакции)
             await status_msg.edit_text(
                 "💳 **Проверка транзакции банком...**\n`█████▒▒▒▒▒ 50%`",
                 parse_mode="Markdown"
             )
 
-            # В этот момент делаем реальные действия в БД
+            # 1. Основное начисление покупателю
             db.update_balance(user_id, amount)
             db.log_payment(user_id, amount, "success", order_str, raw_dict)
 
+            # --- ЛОГИКА РЕФЕРАЛЬНОГО БОНУСА (Пункт 3) ---
+            referrer_id = db.get_referrer(user_id)
+            bonus_text = ""
+
+            if referrer_id:
+                bonus_amount = int(amount * 0.1)  # 10% от покупки
+                if bonus_amount >= 1:
+                    db.update_balance(referrer_id, bonus_amount)
+                    bonus_text = f"\n🎁 Ваш пригласитель получил бонус `{bonus_amount}` ⚡"
+
+                    # Уведомляем того, кто пригласил
+                    try:
+                        await bot.send_message(
+                            chat_id=referrer_id,
+                            text=(
+                                f"🎉 **Реферальный бонус!**\n\n"
+                                f"Ваш друг совершил покупку. Вам начислено `{bonus_amount}` ⚡\n"
+                                f"Ваш баланс: `{db.get_balance(referrer_id)}` ⚡"
+                            ),
+                            parse_mode="Markdown"
+                        )
+                    except:
+                        pass  # Если пригласивший заблокировал бота
+
             await asyncio.sleep(0.7)
 
-            # 3. Финал (зачисление)
             await status_msg.edit_text(
                 "⚡ **Зачисление генераций в облако...**\n`██████████ 100%`",
                 parse_mode="Markdown"
             )
             await asyncio.sleep(0.6)
-
-            # Удаляем шкалу перед финальным анонсом
             await status_msg.delete()
 
-            # 4. Итоговое уведомление
+            # 4. Итоговое уведомление покупателю
             await bot.send_message(
                 chat_id=user_id,
                 text=(
                     f"✅ **Оплата подтверждена!**\n\n"
                     f"Вам зачислено: `{amount}` ⚡\n"
                     f"Ваш текущий баланс: `{db.get_balance(user_id)}` ⚡"
+                    f"{bonus_text}"
                 ),
                 reply_markup=main_kb(),
                 parse_mode="Markdown"
@@ -98,7 +117,6 @@ async def prodamus_webhook(request):
             print(f"❌ ОШИБКА: {error_msg}")
             return web.Response(text="Error", status=500)
 
-    # Логируем другие статусы (отмена, ожидание)
     db.log_payment(temp_user_id, temp_amount, f"ignored_{payment_status}", str(order_data), raw_dict)
     return web.Response(text="Ignored", status=200)
 

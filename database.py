@@ -67,3 +67,29 @@ def log_payment(user_id: int, amount: int, status: str, order_id: str, raw_data:
         "order_id": order_id,
         "raw_data": raw_data
     }).execute()
+
+
+def set_referrer(user_id: int, referrer_id: int):
+    """Связывает пользователя с тем, кто его пригласил"""
+    # Проверяем, что пользователь не приглашает сам себя
+    if user_id == referrer_id:
+        return
+
+    # Проверяем, нет ли у пользователя уже реферера (чтобы нельзя было сменить)
+    user_data = supabase.table("users").select("referrer_id").eq("user_id", user_id).execute()
+    if user_data.data and user_data.data[0].get("referrer_id") is None:
+        return supabase.table("users").update({"referrer_id": referrer_id}).eq("user_id", user_id).execute()
+
+
+def get_referrer(user_id: int):
+    """Возвращает ID того, кто пригласил этого пользователя"""
+    res = supabase.table("users").select("referrer_id").eq("user_id", user_id).execute()
+    if res.data and res.data[0]["referrer_id"]:
+        return int(res.data[0]["referrer_id"])
+    return None
+
+
+def get_referrals_count(user_id: int):
+    """Считает сколько человек пригласил пользователь"""
+    res = supabase.table("users").select("*", count="exact").eq("referrer_id", user_id).execute()
+    return res.count if res.count is not None else 0

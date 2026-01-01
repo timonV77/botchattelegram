@@ -16,144 +16,112 @@ MODELS_MAP = {
 
 
 async def _download_content_bytes(url: str):
-    """Универсальная функция скачивания байтов (фото/видео)"""
-    async with aiohttp.ClientSession() as s:
-        try:
-            async with s.get(url, timeout=300) as r:
-                if r.status == 200:
-                    content_type = r.headers.get("Content-Type", "").lower()
-                    if "video" in content_type:
-                        ext = "mp4"
-                    elif "jpeg" in content_type:
-                        ext = "jpg"
-                    else:
-                        ext = "png"
-                    return await r.read(), ext
-        except Exception as e:
-            print(f"❌ Ошибка при скачивании контента: {e}")
+    """Скачивание с запасом по времени и 5 попытками"""
+    # Таймаут на само скачивание — 10 минут (для тяжелых видео)
+    timeout = aiohttp.ClientTimeout(total=600)
+    async with aiohttp.ClientSession(timeout=timeout) as s:
+        for attempt in range(5):
+            try:
+                async with s.get(url) as r:
+                    if r.status == 200:
+                        content_type = r.headers.get("Content-Type", "").lower()
+                        ext = "mp4" if "video" in content_type else "png"
+                        if "jpeg" in content_type: ext = "jpg"
+                        return await r.read(), ext
+                    elif r.status == 404:
+                        await asyncio.sleep(10)  # Ждем дольше, если файл еще не на сервере
+            except Exception as e:
+                print(f"⚠️ Попытка {attempt + 1} скачивания: {e}")
+                await asyncio.sleep(5)
     return None, None
 
 
 async def process_with_polza(prompt: str, model_type: str, image_url: str = None):
-    """Генерация фото (Image-to-Image)"""
-    if not POLZA_API_KEY:
-        return None, None
+    """Генерация фото: Ожидание увеличено до 15 минут"""
+    if not POLZA_API_KEY: return None, None
 
     model_id = MODELS_MAP.get(model_type)
     headers = {"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"}
 
+    # Таймаут сессии — 15 минут
+    session_timeout = aiohttp.ClientTimeout(total=900)
+
     payload = {
         "model": model_id,
-        "prompt": f"{prompt} (High quality photo, photorealistic)",
+        "prompt": f"{prompt[:1000]} (High quality photo, photorealistic)",
     }
-
     if image_url:
-        payload["filesUrl"] = [image_url]
-        payload["strength"] = 0.7
-
-    # Дополнительные настройки для Pro модели
+        payload.update({"filesUrl": [image_url], "strength": 0.7})
     if model_type == "nanabanana_pro":
         payload.update({"resolution": "1K"})
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=session_timeout) as session:
             async with session.post(f"{BASE_URL}/images/generations", headers=headers, json=payload) as resp:
                 data = await resp.json()
                 request_id = data.get("requestId")
-                if not request_id:
-                    print(f"❌ Ошибка API фото (запрос): {data}")
-                    return None, None
+                if not request_id: return None, None
 
-            for i in range(60):
-                await asyncio.sleep(4)
+            # Опрашиваем 150 раз по 6 секунд = 15 минут
+            for i in range(150):
+                await asyncio.sleep(6)
                 async with session.get(f"{BASE_URL}/images/{request_id}", headers=headers) as s_resp:
                     if s_resp.status != 200: continue
                     result = await s_resp.json()
-
-                    # Ищем ссылку во всех возможных полях
                     res_url = result.get("url") or (result.get("images")[0] if result.get("images") else None)
 
-                    if res_url:
-                        return await _download_content_bytes(res_url)
-
-                    if result.get("status") in ["error", "failed"]:
-                        print(f"❌ Ошибка генерации фото: {result}")
-                        break
+                    if res_url: return await _download_content_bytes(res_url)
+                    if result.get("status") in ["error", "failed"]: break
     except Exception as e:
         print(f"❌ Ошибка в network (фото): {e}")
     return None, None
 
 
-# --- ОБНОВЛЕННАЯ ФУНКЦИЯ ДЛЯ ВИДЕО (KLING 2.5) ---
-
 async def process_video_polza(prompt: str, image_url: str, duration: int):
-    """Генерация видео с исправленным поиском ссылки при COMPLETED"""
-    if not POLZA_API_KEY:
-        return None, None
+    """Генерация видео: Ожидание увеличено до 1 часа (для Kling 2.5)"""
+    if not POLZA_API_KEY: return None, None
 
     headers = {"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"}
     payload = {
         "model": "kling2.5-image-to-video",
-        "prompt": prompt,
+        "prompt": prompt[:1000],
         "duration": duration,
         "imageUrls": [image_url],
         "cfgScale": 0.5
     }
 
+    # Таймаут сессии — 1 час (3600 секунд)
+    video_timeout = aiohttp.ClientTimeout(total=3600)
+
     try:
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=video_timeout) as session:
             async with session.post(f"{BASE_URL}/videos/generations", headers=headers, json=payload) as resp:
                 data = await resp.json()
                 request_id = data.get("requestId")
-                if not request_id:
-                    print(f"❌ Видео API ошибка (старт): {data}")
-                    return None, None
+                if not request_id: return None, None
 
-            print(f"⏳ Видео {request_id} создано. Начинаю опрос статуса...")
+            print(f"⏳ Видео {request_id} запущено. Лимит ожидания: 60 мин.")
 
-            for i in range(300):
-                await asyncio.sleep(5)
+            # Опрашиваем 360 раз по 10 секунд = 60 минут
+            for i in range(360):
+                await asyncio.sleep(10)
                 async with session.get(f"{BASE_URL}/videos/{request_id}", headers=headers) as s_resp:
-                    if s_resp.status != 200:
-                        continue
-
+                    if s_resp.status != 200: continue
                     result = await s_resp.json()
                     status = result.get("status")
 
-                    if i % 6 == 0:
-                        print(f"LOG: Видео {request_id} статус -> {status}")
-
-                    # --- УЛУЧШЕННЫЙ ПОИСК ССЫЛКИ ---
-                    # Проверяем все возможные ключи
-                    video_url = (
-                            result.get("videoUrl") or
-                            result.get("url") or
-                            (result.get("result") if isinstance(result.get("result"), str) else None)
-                    )
-
-                    # Если ссылка не найдена в основных полях, проверяем списки
+                    video_url = result.get("videoUrl") or result.get("url")
                     if not video_url:
-                        res_data = result.get("images") or result.get("videos") or result.get("result")
+                        res_data = result.get("result") or result.get("videos")
                         if isinstance(res_data, list) and len(res_data) > 0:
                             video_url = res_data[0]
+                        elif isinstance(res_data, str):
+                            video_url = res_data
 
-                    # Если статус завершен успешно
-                    if status in ["COMPLETED", "success"]:
-                        if video_url:
-                            print(f"✅ Ссылка найдена: {video_url}. Скачиваю...")
-                            return await _download_content_bytes(video_url)
-                        else:
-                            # Статус готов, но ссылка еще "долетает" до API
-                            print(f"⚠️ Статус {status}, но URL еще не появился. Ждем...")
-                            continue
+                    if status in ["COMPLETED", "success"] and video_url:
+                        return await _download_content_bytes(video_url)
 
-                    if status in ["error", "failed"]:
-                        print(f"❌ Ошибка Kling: {result}")
-                        break
-
-            print(f"⚠️ Видео {request_id} завершилось по таймауту.")
-
+                    if status in ["error", "failed"]: break
     except Exception as e:
         print(f"❌ Ошибка в network (видео): {e}")
-
     return None, None

@@ -12,16 +12,15 @@ import database as db
 
 router = Router()
 
-# Лимиты для стабильности
-PROMPT_LIMIT = 1000
-CAPTION_LIMIT = 1000  # Лимит Telegram - 1024
+# Лимиты для стабильности (уменьшены для гарантированного прохождения через прокси)
+PROMPT_LIMIT = 600
+CAPTION_LIMIT = 900
 
 MODEL_NAMES = {
     "nanabanana": "🍌 Nano Banana",
     "nanabanana_pro": "💎 Nano Banana PRO",
     "seadream": "🎨 SeaDream 4.5"
 }
-
 
 # --- СЛУЖЕБНЫЕ КОМАНДЫ ---
 
@@ -37,12 +36,10 @@ async def show_counters(message: types.Message):
         print(f"❌ Ошибка команды counters: {e}")
         await message.answer("❌ Не удалось получить статистику.")
 
-
 @router.message(F.text == "❌ Отменить")
 async def cancel_text(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("Действие отменено.", reply_markup=main_kb())
-
 
 # --- БЛОК ФОТОСЕССИИ ---
 
@@ -56,13 +53,11 @@ async def start_photo(message: types.Message, state: FSMContext):
                          parse_mode="Markdown")
     await state.set_state(PhotoProcess.waiting_for_photo)
 
-
 @router.message(PhotoProcess.waiting_for_photo, F.photo)
 async def on_photo(message: types.Message, state: FSMContext):
     await state.update_data(photo_id=message.photo[-1].file_id)
     await message.answer("🤖 **Выберите нейросеть для обработки:**", reply_markup=model_inline(), parse_mode="Markdown")
     await state.set_state(PhotoProcess.waiting_for_model)
-
 
 @router.callback_query(F.data.startswith("model_"))
 async def on_model(callback: types.CallbackQuery, state: FSMContext):
@@ -79,16 +74,16 @@ async def on_model(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(PhotoProcess.waiting_for_prompt)
     await callback.answer()
 
-
 @router.message(PhotoProcess.waiting_for_prompt)
 async def on_prompt(message: types.Message, state: FSMContext):
     if message.text == "❌ Отменить": return await cancel_text(message, state)
+    if not message.text: return await message.answer("✍️ Пожалуйста, введите текстовое описание.")
+
+    # МГНОВЕННАЯ ОБРЕЗКА (Защита от Timeout)
+    user_prompt = message.text[:PROMPT_LIMIT]
 
     user_id = message.from_user.id
     data = await state.get_data()
-
-    # Обрезаем длинный промпт для безопасности
-    user_prompt = message.text[:PROMPT_LIMIT]
 
     if "photo_id" not in data:
         await state.clear()
@@ -106,14 +101,12 @@ async def on_prompt(message: types.Message, state: FSMContext):
 
     try:
         photo_url = await get_telegram_photo_url(message.bot, data["photo_id"])
-        # Отправляем обрезанный промпт в нейросеть
+        # Передаем уже обрезанный текст
         img_bytes, ext = await generate(photo_url, user_prompt, model)
 
         if img_bytes:
             charge(user_id, cost)
             file = BufferedInputFile(img_bytes, filename=f"res.{ext or 'png'}")
-
-            # Обрезаем промпт для подписи (Telegram limit)
             safe_caption = user_prompt[:CAPTION_LIMIT]
 
             await message.answer_photo(
@@ -137,7 +130,6 @@ async def on_prompt(message: types.Message, state: FSMContext):
         except:
             pass
 
-
 # --- БЛОК ОЖИВЛЕНИЯ (VIDEO) ---
 
 @router.message(F.text == "🎬 Оживить фото")
@@ -147,7 +139,6 @@ async def start_video(message: types.Message, state: FSMContext):
         return await message.answer("❌ Нужно минимум 5 генераций.")
     await message.answer("📸 **Пришлите фото** для оживления:", reply_markup=cancel_kb(), parse_mode="Markdown")
     await state.set_state(PhotoProcess.waiting_for_video_photo)
-
 
 @router.message(PhotoProcess.waiting_for_video_photo, F.photo)
 async def on_video_photo(message: types.Message, state: FSMContext):
@@ -159,7 +150,6 @@ async def on_video_photo(message: types.Message, state: FSMContext):
     await message.answer("⏳ **Выберите длительность:**", reply_markup=kb, parse_mode="Markdown")
     await state.set_state(PhotoProcess.waiting_for_duration)
 
-
 @router.callback_query(F.data.startswith("v_dur_"))
 async def on_duration(callback: types.CallbackQuery, state: FSMContext):
     duration = int(callback.data.split("_")[2])
@@ -169,14 +159,16 @@ async def on_duration(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(PhotoProcess.waiting_for_video_prompt)
     await callback.answer()
 
-
 @router.message(PhotoProcess.waiting_for_video_prompt)
 async def on_video_prompt(message: types.Message, state: FSMContext):
     if message.text == "❌ Отменить": return await cancel_text(message, state)
+    if not message.text: return await message.answer("✍️ Пожалуйста, опишите движение текстом.")
+
+    # МГНОВЕННАЯ ОБРЕЗКА
+    video_prompt = message.text[:PROMPT_LIMIT]
 
     user_id = message.from_user.id
     data = await state.get_data()
-    video_prompt = message.text[:PROMPT_LIMIT]  # Обрезаем
 
     if "photo_id" not in data:
         await state.clear()

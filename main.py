@@ -33,23 +33,28 @@ async def main():
     except OSError:
         print(f"⚠️ Порт {port} уже занят")
 
-    # --- ИСПРАВЛЕНИЕ ТАЙМАУТОВ ---
-    # Принудительно ставим таймаут на сессию бота, чтобы он не отключался через 60 сек
-    bot.default_type_system = DefaultBotProperties(parse_mode=ParseMode.HTML, request_timeout=300)
+    # --- ИСПРАВЛЕНИЕ: Удаляем некорректную настройку ---
+    # Мы настраиваем ParseMode в app/bot.py, здесь ничего дублировать не нужно
 
     print("🚀 Запуск бота (Long Polling: 300s timeout)...")
 
     try:
-        # Удаляем старые вебхуки, чтобы polling работал корректно
+        # Удаляем вебхук, чтобы не было конфликта с polling
         await bot.delete_webhook(drop_pending_updates=True)
 
-        # Запуск прослушивания
-        await dp.start_polling(bot, handle_as_tasks=True)
+        # ПРАВИЛЬНЫЙ СПОСОБ ЗАДАТЬ ТАЙМАУТ:
+        # Передаем request_timeout прямо в start_polling
+        await dp.start_polling(
+            bot,
+            handle_as_tasks=True,
+            request_timeout=300
+        )
     except Exception as e:
         logging.error(f"❌ Критическая ошибка: {e}")
     finally:
-        # Корректное закрытие
-        await bot.session.close()
+        # Корректное закрытие сессий
+        if bot.session:
+            await bot.session.close()
         await runner.cleanup()
 
 

@@ -8,17 +8,17 @@ load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+# Базовые заголовки
 HEADERS = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type": "application/json",
-    "Prefer": "return=representation"
+    "Content-Type": "application/json"
 }
 
 TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 
-# Создаем единый клиент для всего приложения
-# Это защищает от ошибок "Too many open files" и разрывов соединений
+# Единый клиент для всего приложения
 client = httpx.AsyncClient(
     base_url=SUPABASE_URL,
     headers=HEADERS,
@@ -28,13 +28,22 @@ client = httpx.AsyncClient(
 
 
 async def get_users_count():
-    """Возвращает общее количество пользователей."""
+    """Возвращает общее количество пользователей (исправлено)."""
     try:
-        response = await client.get("/rest/v1/users?select=*", params={"count": "exact"})
+        # Для получения count в Supabase ОБЯЗАТЕЛЕН заголовок Prefer
+        count_headers = {**HEADERS, "Prefer": "count=exact"}
+        response = await client.get(
+            "/rest/v1/users",
+            params={"select": "user_id", "limit": 1},
+            headers=count_headers
+        )
         response.raise_for_status()
-        # Возвращаем количество из заголовка или длину данных
-        count = response.headers.get("Content-Range", "0-0/0").split("/")[-1]
-        return int(count)
+
+        # Данные о количестве приходят в заголовке Content-Range
+        content_range = response.headers.get("Content-Range", "")
+        if "/" in content_range:
+            return int(content_range.split("/")[-1])
+        return 0
     except Exception as e:
         logging.error(f"❌ Ошибка подсчета пользователей: {e}")
         return 0
@@ -48,8 +57,11 @@ async def create_new_user(user_id: int, referrer_id: int = None):
             "balance": 1,
             "referrer_id": int(referrer_id) if referrer_id else None
         }
-        response = await client.post("/rest/v1/users", json=data)
-        if response.status_code in [201, 409]:  # 409 значит уже существует
+        # Используем Prefer для возврата созданной записи
+        post_headers = {**HEADERS, "Prefer": "return=representation"}
+        response = await client.post("/rest/v1/users", json=data, headers=post_headers)
+
+        if response.status_code in [201, 200, 409]:
             logging.info(f"👤 Пользователь {user_id} готов (Ref: {referrer_id})")
             return True
         return False
@@ -99,7 +111,6 @@ async def set_referrer(user_id: int, referrer_id: int):
     if int(user_id) == int(referrer_id):
         return
     try:
-        # Проверяем текущего пользователя
         response = await client.get(
             "/rest/v1/users",
             params={"select": "referrer_id", "user_id": f"eq.{int(user_id)}"}
@@ -119,7 +130,7 @@ async def set_referrer(user_id: int, referrer_id: int):
 
 
 async def log_payment(user_id: int, amount: int, status: str, order_id: str, raw_data: dict):
-    """Логирование платежа в таблицу payment_logs."""
+    """Логирование платежа."""
     try:
         await client.post("/rest/v1/payment_logs", json={
             "user_id": int(user_id),
@@ -131,22 +142,26 @@ async def log_payment(user_id: int, amount: int, status: str, order_id: str, raw
     except Exception as e:
         logging.error(f"❌ Ошибка log_payment: {e}")
 
+
 async def get_referrals_count(user_id: int):
-    """Количество приглашённых пользователей."""
+    """Количество приглашённых пользователей (исправлено)."""
     try:
+        count_headers = {**HEADERS, "Prefer": "count=exact"}
         response = await client.get(
             "/rest/v1/users",
             params={
-                "select": "*",
-                "count": "exact",
-                "referrer_id": f"eq.{int(user_id)}"
-            }
+                "select": "user_id",
+                "referrer_id": f"eq.{int(user_id)}",
+                "limit": 1
+            },
+            headers=count_headers
         )
         response.raise_for_status()
-        # Извлекаем количество из заголовка Content-Range
-        content_range = response.headers.get("Content-Range", "0-0/0")
-        count = content_range.split("/")[-1]
-        return int(count)
+
+        content_range = response.headers.get("Content-Range", "")
+        if "/" in content_range:
+            return int(content_range.split("/")[-1])
+        return 0
     except Exception as e:
         logging.error(f"❌ Ошибка get_referrals_count: {e}")
         return 0

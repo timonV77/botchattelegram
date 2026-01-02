@@ -51,16 +51,24 @@ async def generate(image_url: str, prompt: str, model: str):
             return None, None
 
         return img_bytes, ext
+
     except Exception as e:
         print(f"❌ [КРИТИЧЕСКАЯ ОШИБКА GENERATE]:\n{traceback.format_exc()}")
         return None, None
 
 
-async def generate_video(image_url: str, prompt: str, duration: int):
-    """Основная функция для генерации ВИДЕО (Kling 2.5)."""
+async def generate_video(image_url: str, prompt: str, model: str = "kling_5"):
+    """Основная функция для генерации ВИДЕО через Polza AI."""
     try:
-        print(f"--- 🎬 Запуск видео: {duration} сек ---")
-        return await process_video_polza(prompt, image_url, duration)
+        print(f"--- 🎬 Запуск видео для модели {model} ---")
+        video_bytes, ext = await process_video_polza(prompt, model, image_url)
+
+        if not video_bytes:
+            print(f"⚠️ [API] Нейросеть вернула пустой результат для видео {model}")
+            return None, None
+
+        return video_bytes, ext
+
     except Exception as e:
         print(f"❌ [КРИТИЧЕСКАЯ ОШИБКА VIDEO]:\n{traceback.format_exc()}")
         return None, None

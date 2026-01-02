@@ -1,6 +1,5 @@
 import asyncio
 import os
-import aiohttp
 import logging
 from aiohttp import web
 from aiogram.client.session.aiohttp import AiohttpSession
@@ -15,14 +14,6 @@ from app.routers.payments import prodamus_webhook
 
 
 async def main():
-    # --- НАСТРОЙКА ТАЙМАУТОВ ---
-    # 300 секунд (5 минут) достаточно для генерации и загрузки тяжелых файлов
-    timeout = aiohttp.ClientTimeout(total=300, connect=30, sock_read=300)
-
-    # Пересоздаем сессию бота с расширенным таймаутом
-    # Это решает проблему "TelegramNetworkError: Request timeout error"
-    bot.session = AiohttpSession(timeout=timeout)
-
     # 1. Настраиваем роутеры
     setup_routers(dp)
 
@@ -33,7 +24,6 @@ async def main():
     runner = web.AppRunner(app)
     await runner.setup()
 
-    # Берем порт из переменных окружения или 8080 по умолчанию
     port = int(os.getenv("PORT", 8080))
 
     try:
@@ -41,26 +31,30 @@ async def main():
         await site.start()
         print(f"✅ Сервер платежей запущен на порту {port}")
     except OSError:
-        print(f"⚠️ Порт {port} уже занят (возможно, бот запущен в другом процессе)")
+        print(f"⚠️ Порт {port} уже занят")
 
-    print("🚀 Запуск бота с таймаутом сессии 300с...")
+    # --- ИСПРАВЛЕНИЕ ТАЙМАУТА ---
+    # Мы не создаем сложный объект ClientTimeout, а просто пересоздаем сессию
+    # и полагаемся на внутренние механизмы aiogram для длительных запросов.
+    if not bot.session or bot.session.closed:
+        bot.session = AiohttpSession()
+
+    print("🚀 Запуск бота в режиме Polling...")
 
     try:
-        # skip_updates=True помогает избежать лавины старых сообщений при перезапуске
-        await dp.start_polling(bot, skip_updates=True)
+        # Включаем автоматическое управление таймаутами внутри aiogram
+        await dp.start_polling(bot, skip_updates=True, request_timeout=300)
     except Exception as e:
         logging.error(f"❌ Критическая ошибка в работе бота: {e}")
     finally:
-        # Корректное закрытие ресурсов при остановке службы
         if bot.session:
             await bot.session.close()
         await runner.cleanup()
 
 
 if __name__ == "__main__":
-    # Настраиваем базовое логирование, чтобы видеть события в journalctl
     logging.basicConfig(level=logging.INFO)
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        print("\n🛑 Бот остановлен пользователем или системой")
+        print("\n🛑 Бот остановлен")

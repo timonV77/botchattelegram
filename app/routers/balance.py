@@ -7,25 +7,30 @@ router = Router()
 @router.message(F.text == "👤 Мой баланс")
 async def balance(message: types.Message):
     user_id = message.from_user.id
-    bal = db.get_balance(user_id)
-    ref_count = await db.get_referrals_count(user_id)  # Счетчик из БД
+
+    # 1. Исправлено: добавлен await
+    bal = await db.get_balance(user_id)
+
+    # 2. Исправлено: добавлен await
+    ref_count = await db.get_referrals_count(user_id)
 
     bot_info = await message.bot.get_me()
     ref_link = f"https://t.me/{bot_info.username}?start={user_id}"
 
+    # 3. Переписано на HTML (более стабильно для aiogram 3.x)
     text = (
-        f"👤 **Ваш профиль**\n"
-        f"┣ ID: `{user_id}`\n"
-        f"┗ Баланс: **{bal}** ⚡\n\n"
-        f"👥 **Приглашено друзей:** `{ref_count}`\n\n"
-        f"🎁 **Рeферальная программа:**\n"
-        f"Получайте **10%** от покупок друзей!\n\n"
-        f"🔗 **Ваша ссылка:**\n`{ref_link}`\n\n"
-        f"_Нажмите на ссылку, чтобы скопировать._"
+        f"👤 <b>Ваш профиль</b>\n"
+        f"┣ ID: <code>{user_id}</code>\n"
+        f"┗ Баланс: <b>{bal}</b> ⚡\n\n"
+        f"👥 <b>Приглашено друзей:</b> <code>{ref_count}</code>\n\n"
+        f"🎁 <b>Реферальная программа:</b>\n"
+        f"Получайте <b>10%</b> от покупок друзей!\n\n"
+        f"🔗 <b>Ваша ссылка:</b>\n<code>{ref_link}</code>\n\n"
+        f"<i>Нажмите на ссылку, чтобы скопировать.</i>"
     )
 
     await message.answer(
         text,
-        parse_mode="Markdown",
-        timeout=60  # увеличиваем таймаут до 60 секунд
+        parse_mode="HTML",  # Указываем HTML явно
+        disable_web_page_preview=True  # Чтобы ссылка не создавала огромное окно предпросмотра
     )

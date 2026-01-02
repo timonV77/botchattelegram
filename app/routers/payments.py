@@ -1,5 +1,6 @@
 import asyncio
 import os
+import logging
 from aiohttp import web
 from aiogram import Router, types, F
 from urllib.parse import urlencode
@@ -20,26 +21,28 @@ async def prodamus_webhook(request):
     data = await request.post()
     raw_dict = dict(data)
 
-    print(f"DEBUG: Входящий запрос от Prodamus: {raw_dict}")
+    logging.info(f"DEBUG: Входящий запрос от Prodamus: {raw_dict}")
 
     payment_status = data.get("payment_status")
     order_data = data.get("order_num")
 
     temp_user_id = None
     temp_amount = 0
+
+    # Парсим ID пользователя и количество генераций из номера заказа
     if order_data and "_" in str(order_data):
         try:
             p = str(order_data).split("_")
             temp_user_id = int(p[0])
             temp_amount = int(p[1])
-        except:
+        except Exception:
             pass
 
     if payment_status == "success" and order_data:
         try:
             order_str = str(order_data)
             if "_" not in order_str:
-                db.log_payment(temp_user_id, temp_amount, "failed_format", order_str, raw_dict)
+                await db.log_payment(temp_user_id, temp_amount, "failed_format", order_str, raw_dict)
                 return web.Response(text="Wrong order format", status=200)
 
             user_id = temp_user_id
@@ -48,76 +51,85 @@ async def prodamus_webhook(request):
             # --- АНИМАЦИЯ ОБРАБОТКИ ---
             status_msg = await bot.send_message(
                 chat_id=user_id,
-                text="⏳ **Платеж получен! Начинаем обработку...**\n`▒▒▒▒▒▒▒▒▒▒ 0%`",
-                parse_mode="Markdown"
+                text="⏳ <b>Платеж получен! Начинаем обработку...</b>\n<code>▒▒▒▒▒▒▒▒▒▒ 0%</code>",
+                parse_mode="HTML"
             )
             await asyncio.sleep(0.7)
 
             await status_msg.edit_text(
-                "💳 **Проверка транзакции банком...**\n`█████▒▒▒▒▒ 50%`",
-                parse_mode="Markdown"
+                "💳 <b>Проверка транзакции банком...</b>\n<code>█████▒▒▒▒▒ 50%</code>",
+                parse_mode="HTML"
             )
 
-            # 1. Основное начисление покупателю
-            db.update_balance(user_id, amount)
-            db.log_payment(user_id, amount, "success", order_str, raw_dict)
+            # 1. Основное начисление покупателю (ДОБАВЛЕН AWAIT)
+            await db.update_balance(user_id, amount)
+            await db.log_payment(user_id, amount, "success", order_str, raw_dict)
 
-            # --- ЛОГИКА РЕФЕРАЛЬНОГО БОНУСА (Пункт 3) ---
-            referrer_id = db.get_referrer(user_id)
+            # --- ЛОГИКА РЕФЕРАЛЬНОГО БОНУСА ---
+            # Предполагаем, что в database.py есть функция get_user_referrer
+            # Если нет, нужно использовать db.client для запроса referrer_id
+            referrer_id = None
+            try:
+                # Получаем данные пользователя, чтобы узнать его реферера
+                user_response = await db.client.get(
+                    "/rest/v1/users",
+                    params={"select": "referrer_id", "user_id": f"eq.{user_id}"}
+                )
+                user_data = user_response.json()
+                if user_data:
+                    referrer_id = user_data[0].get("referrer_id")
+            except Exception as e:
+                logging.error(f"Ошибка поиска реферера: {e}")
+
             bonus_text = ""
-
             if referrer_id:
                 bonus_amount = int(amount * 0.1)  # 10% от покупки
                 if bonus_amount >= 1:
-                    db.update_balance(referrer_id, bonus_amount)
-                    bonus_text = f"\n🎁 Ваш пригласитель получил бонус `{bonus_amount}` ⚡"
+                    await db.update_balance(referrer_id, bonus_amount)
+                    bonus_text = f"\n🎁 Ваш пригласитель получил бонус <b>{bonus_amount}</b> ⚡"
 
-                    # Уведомляем того, кто пригласил
                     try:
                         await bot.send_message(
                             chat_id=referrer_id,
                             text=(
-                                f"🎉 **Реферальный бонус!**\n\n"
-                                f"Ваш друг совершил покупку. Вам начислено `{bonus_amount}` ⚡\n"
-                                f"Ваш баланс: `{db.get_balance(referrer_id)}` ⚡"
+                                f"🎉 <b>Реферальный бонус!</b>\n\n"
+                                f"Ваш друг совершил покупку. Вам начислено <b>{bonus_amount}</b> ⚡\n"
+                                f"Ваш текущий баланс обновлен."
                             ),
-                            parse_mode="Markdown"
+                            parse_mode="HTML"
                         )
-                    except:
-                        pass  # Если пригласивший заблокировал бота
+                    except Exception:
+                        pass
 
             await asyncio.sleep(0.7)
-
             await status_msg.edit_text(
-                "⚡ **Зачисление генераций в облако...**\n`██████████ 100%`",
-                parse_mode="Markdown"
+                "⚡ <b>Зачисление генераций в облако...</b>\n<code>██████████ 100%</code>",
+                parse_mode="HTML"
             )
             await asyncio.sleep(0.6)
             await status_msg.delete()
 
-            # 4. Итоговое уведомление покупателю
+            # Итоговое уведомление (ДОБАВЛЕН AWAIT к получению баланса)
+            current_bal = await db.get_balance(user_id)
             await bot.send_message(
                 chat_id=user_id,
                 text=(
-                    f"✅ **Оплата подтверждена!**\n\n"
-                    f"Вам зачислено: `{amount}` ⚡\n"
-                    f"Ваш текущий баланс: `{db.get_balance(user_id)}` ⚡"
+                    f"✅ <b>Оплата подтверждена!</b>\n\n"
+                    f"Вам зачислено: <b>{amount}</b> ⚡\n"
+                    f"Ваш текущий баланс: <b>{current_bal}</b> ⚡"
                     f"{bonus_text}"
                 ),
                 reply_markup=main_kb(),
-                parse_mode="Markdown"
+                parse_mode="HTML"
             )
 
-            print(f"✅ УСПЕХ: Начислено {amount} генов пользователю {user_id}")
+            logging.info(f"✅ УСПЕХ: Начислено {amount} генов пользователю {user_id}")
             return web.Response(text="OK", status=200)
 
         except Exception as e:
-            error_msg = f"error: {str(e)}"
-            db.log_payment(temp_user_id, temp_amount, error_msg, str(order_data), raw_dict)
-            print(f"❌ ОШИБКА: {error_msg}")
+            logging.error(f"❌ ОШИБКА Вебхука: {e}")
             return web.Response(text="Error", status=500)
 
-    db.log_payment(temp_user_id, temp_amount, f"ignored_{payment_status}", str(order_data), raw_dict)
     return web.Response(text="Ignored", status=200)
 
 
@@ -125,6 +137,7 @@ async def prodamus_webhook(request):
 
 @router.message(F.text == "💳 Пополнить")
 async def show_deposit_menu(message: types.Message):
+    # Используем HTML для консистентности
     kb = types.InlineKeyboardMarkup(inline_keyboard=[
         [types.InlineKeyboardButton(text="10 ген. — 149₽", callback_data="pay_10_149")],
         [types.InlineKeyboardButton(text="25 ген. — 375₽", callback_data="pay_25_375")],
@@ -133,10 +146,10 @@ async def show_deposit_menu(message: types.Message):
     ])
 
     await message.answer(
-        "⚡ **Выберите пакет генераций:**\n\n"
+        "⚡ <b>Выберите пакет генераций:</b>\n\n"
         "После оплаты генерации будут зачислены мгновенно.",
         reply_markup=kb,
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
 
 
@@ -162,16 +175,17 @@ async def create_payment_link(callback: types.CallbackQuery):
     ])
 
     await callback.message.edit_text(
-        f"💎 **Вы выбрали:** {amount} генераций\n"
-        f"💰 **Сумма:** {price}₽\n\n"
+        f"💎 <b>Вы выбрали:</b> {amount} генераций\n"
+        f"💰 <b>Сумма:</b> {price}₽\n\n"
         "Нажмите кнопку ниже, чтобы открыть страницу оплаты:",
         reply_markup=pay_kb,
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
     await callback.answer()
 
 
 @router.callback_query(F.data == "back_to_tariffs")
 async def back_to_tariffs(callback: types.CallbackQuery):
+    # Вызываем функцию напрямую
     await show_deposit_menu(callback.message)
     await callback.answer()

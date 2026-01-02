@@ -5,7 +5,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import FSInputFile
 
-# Импортируем клавиатуры (убедись, что support_inline_kb добавлена в reply.py)
+# Импортируем клавиатуры из твоего файла
 from app.keyboards.reply import main_kb, support_inline_kb
 import database as db
 
@@ -52,7 +52,7 @@ async def start_cmd(message: types.Message, state: FSMContext):
         parse_mode="HTML"
     )
 
-    # 4. ОТПРАВКА ОФЕРТЫ
+    # 4. ОТПРАВКА ОФЕРТЫ (если файл существует)
     offer_path = "assets/offer.pdf"
     if os.path.exists(offer_path):
         try:
@@ -64,20 +64,30 @@ async def start_cmd(message: types.Message, state: FSMContext):
             logging.error(f"❌ Не удалось отправить PDF: {e}")
 
 
-# --- НОВЫЙ ХЕНДЛЕР ДЛЯ КНОПКИ ПОМОЩИ ---
+# --- ОБРАБОТКА КНОПОК НИЖНЕГО МЕНЮ ---
 
 @router.message(F.text == "🆘 Помощь")
 async def help_handler(message: types.Message):
-    """Обработка нажатия на кнопку Помощь."""
+    """Обработка нажатия на кнопку '🆘 Помощь' в Reply-меню."""
+    logging.info(f"🆘 Кнопка Помощь нажата пользователем {message.from_user.id}")
     help_text = (
         "💎 <b>Нужна помощь?</b>\n\n"
-        "Если у тебя возникли проблемы с генерацией, оплатой или есть предложения по улучшению бота — напиши нашему менеджеру.\n\n"
+        "Если у тебя возникли вопросы по оплате, генерации или работе бота — напиши нашему менеджеру.\n\n"
         "👤 <b>Поддержка:</b> @essmirraaa"
     )
 
-    # Отправляем сообщение с Inline-кнопкой ссылкой
     await message.answer(
         help_text,
         reply_markup=support_inline_kb(),
         parse_mode="HTML"
+    )
+
+
+@router.message(F.text == "❌ Отменить")
+async def cancel_handler(message: types.Message, state: FSMContext):
+    """Универсальная отмена любого действия."""
+    await state.clear()
+    await message.answer(
+        "❌ Действие отменено. Вы вернулись в главное меню.",
+        reply_markup=main_kb()
     )

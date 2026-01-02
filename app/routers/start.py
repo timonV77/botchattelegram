@@ -1,3 +1,5 @@
+import os
+import logging
 from aiogram import Router, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -10,33 +12,61 @@ router = Router()
 
 @router.message(Command("start"))
 async def start_cmd(message: types.Message, state: FSMContext):
+    """Хендлер команды /start: регистрация, рефералы и приветствие."""
     await state.clear()
     user_id = message.from_user.id
+    username = message.from_user.username or "без username"
 
-    # 1. Сначала обрабатываем глубокую ссылку (deep-linking)
+    logging.info(f"🚀 Команда /start от пользователя {user_id} (@{username})")
+
+    # 1. ОБРАБОТКА РЕФЕРАЛЬНОЙ ССЫЛКИ
     args = message.text.split()
     if len(args) > 1:
         payload = args[1]
         if payload.isdigit():
             referrer_id = int(payload)
-            # ВАЖНО: Сначала записываем связь в базу
-            db.set_referrer(user_id, referrer_id)
+            if referrer_id != user_id:
+                # ВАЖНО: используем await, так как функция в db асинхронная
+                await db.set_referrer(user_id, referrer_id)
+                logging.info(f"🔗 Установлен реферер {referrer_id} для {user_id}")
 
-    # 2. Теперь инициализируем пользователя (даем баланс, если новый)
-    db.get_balance(user_id)
+    # 2. РЕГИСТРАЦИЯ И ПОЛУЧЕНИЕ БАЛАНСА
+    # await обязателен, иначе баланс будет объектом-пустышкой
+    try:
+        balance = await db.get_balance(user_id)
+    except Exception as e:
+        logging.error(f"❌ Ошибка при получении баланса {user_id}: {e}")
+        balance = 0
 
-    # 3. Приветствие
-    await message.answer(
-        "👋 Привет! Я твой личный AI-фотограф.\n\n"
-        "Отправь мне фото, выбери стиль и получи шедевр!",
-        reply_markup=main_kb()
+    # 3. ОТПРАВКА ПРИВЕТСТВИЯ
+    welcome_text = (
+        f"👋 <b>Привет! Я твой личный AI-фотограф.</b>\n\n"
+        f"Я превращаю обычные селфи в профессиональные портреты за считанные секунды.\n\n"
+        f"💰 Твой баланс: <b>{balance}</b> генераций.\n\n"
+        f"📸 <b>Отправь мне фото</b>, выбери стиль и начни творить!"
     )
 
-    # 4. Оферта
-    try:
-        await message.answer_document(
-            FSInputFile("assets/offer.pdf"),
-            caption="📄 Продолжая пользоваться ботом, вы даёте согласие с условиями оферты."
+    await message.answer(
+        welcome_text,
+        reply_markup=main_kb(),
+        parse_mode="HTML"
+    )
+
+    # 4. ОТПРАВКА ОФЕРТЫ (С проверкой наличия файла)
+    offer_path = "assets/offer.pdf"
+    if os.path.exists(offer_path):
+        try:
+            await message.answer_document(
+                FSInputFile(offer_path),
+                caption="📄 Продолжая пользоваться ботом, вы даёте согласие с условиями оферты."
+            )
+        except Exception as e:
+            logging.error(f"❌ Не удалось отправить PDF: {e}")
+    else:
+        # Если файла нет, просто пишем текст, чтобы бот не "падал"
+        await message.answer(
+            "📄 <i>Ознакомиться с договором оферты вы можете в описании нашего профиля.</i>",
+            parse_mode="HTML"
         )
-    except:
-        pass
+
+# Не забываем экспортировать роутер

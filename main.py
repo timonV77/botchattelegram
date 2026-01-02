@@ -31,29 +31,33 @@ async def main():
         await site.start()
         print(f"✅ Сервер платежей запущен на порту {port}")
     except OSError:
-        print(f"⚠️ Порт {port} уже занят (возможно, бот запущен в другом процессе)")
+        print(f"⚠️ Порт {port} уже занят")
 
-    # --- ИСПРАВЛЕНИЕ СЕССИИ ---
-    # Мы просто убеждаемся, что сессия существует, без лишних проверок свойств
-    if bot.session is None:
-        bot.session = AiohttpSession()
+    # --- ИСПРАВЛЕНИЕ ТАЙМАУТОВ ---
+    # Принудительно ставим таймаут на сессию бота, чтобы он не отключался через 60 сек
+    bot.default_type_system = DefaultBotProperties(parse_mode=ParseMode.HTML, request_timeout=300)
 
-    print("🚀 Запуск бота в режиме Polling с таймаутом 300с...")
+    print("🚀 Запуск бота (Long Polling: 300s timeout)...")
 
     try:
-        # Параметр request_timeout=300 решает проблему с ожиданием тяжелых фото
-        await dp.start_polling(bot, skip_updates=True, request_timeout=300)
+        # Удаляем старые вебхуки, чтобы polling работал корректно
+        await bot.delete_webhook(drop_pending_updates=True)
+
+        # Запуск прослушивания
+        await dp.start_polling(bot, handle_as_tasks=True)
     except Exception as e:
-        logging.error(f"❌ Критическая ошибка в работе бота: {e}")
+        logging.error(f"❌ Критическая ошибка: {e}")
     finally:
-        # Корректно закрываем сессию при выключении
-        if bot.session and not bot.session.closed:  # Здесь проверка допустима в блоке закрытия для aiohttp
-            await bot.session.close()
+        # Корректное закрытие
+        await bot.session.close()
         await runner.cleanup()
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):

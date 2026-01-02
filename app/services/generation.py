@@ -18,10 +18,10 @@ def cost_for(model: str) -> int:
     return COSTS.get(model, 1)
 
 
-def has_balance(user_id: int, cost: int) -> bool:
-    """Проверяет баланс пользователя с защитой от ошибок базы."""
+async def has_balance(user_id: int, cost: int) -> bool:
+    """Проверяет баланс пользователя с защитой от ошибок базы (асинхронно)."""
     try:
-        balance = db.get_balance(user_id)
+        balance = await db.get_balance(user_id)
         return balance >= cost
     except Exception as e:
         logging.error(f"❌ Ошибка при проверке баланса (User {user_id}): {e}")
@@ -29,10 +29,10 @@ def has_balance(user_id: int, cost: int) -> bool:
         return False
 
 
-def charge(user_id: int, cost: int):
+async def charge(user_id: int, cost: int):
     """Списывает стоимость с баланса. Если база упадет, бот продолжит работу."""
     try:
-        db.update_balance(user_id, -cost)
+        await db.update_balance(user_id, -cost)
         print(f"✅ [ОПЛАТА] Списано {cost} ⚡ у пользователя {user_id}")
     except Exception as e:
         print(f"⚠️ [ВНИМАНИЕ] Ошибка списания (User {user_id}): {e}")

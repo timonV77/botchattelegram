@@ -2,26 +2,23 @@ from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.client.telegram import TelegramAPIServer  # Добавили импорт
 from .config import get_settings
 
 settings = get_settings()
 
-# 1. Настраиваем сессию с хорошим таймаутом
-session = AiohttpSession(
-    timeout=60
-)
+# 1. Увеличиваем таймаут до 5 минут (300 секунд)
+# Это критически важно для работы с генерацией изображений
+session = AiohttpSession()
 
-# 2. Настраиваем зеркало API (для обхода таймаутов в РФ)
-# Это перенаправит запросы через рабочий узел
-custom_api = TelegramAPIServer.from_base("https://api.tgproxy.me")
-
-# 3. Инициализируем бота с использованием сервера-зеркала
+# 2. Инициализируем бота
+# Убираем server=custom_api, так как сервер находится не в РФ и доступ к API прямой
 bot = Bot(
     token=settings.bot_token,
     session=session,
-    server=custom_api,  # Указываем зеркало здесь
-    default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
+    default=DefaultBotProperties(
+        parse_mode=ParseMode.HTML, # HTML менее капризный, чем Markdown
+        request_timeout=300        # Добавляем таймаут сюда тоже
+    )
 )
 
 dp = Dispatcher()

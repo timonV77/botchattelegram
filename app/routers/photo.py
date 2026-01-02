@@ -25,7 +25,7 @@ MODEL_NAMES = {
 async def show_counters(message: types.Message):
     """Показ количества пользователей"""
     try:
-        count = db.get_users_count()
+        count = await db.get_users_count()
         await message.answer(
             f"📊 **Статистика бота**\n\n"
             f"👤 Всего зарегистрировано: `{count}` пользователей.",
@@ -48,7 +48,8 @@ async def start_photo(message: types.Message, state: FSMContext):
     """Старт фотосессии"""
     user_id = message.from_user.id
 
-    if db.get_balance(user_id) < 1:
+    balance = await db.get_balance(user_id)
+    if balance < 1:
         return await message.answer("❌ У вас недостаточно генераций.")
 
     await message.answer(
@@ -113,7 +114,7 @@ async def on_prompt(message: types.Message, state: FSMContext):
     model = data.get("chosen_model", "nanabanana")
     cost = cost_for(model)
 
-    if not has_balance(user_id, cost):
+    if not await has_balance(user_id, cost):
         await state.clear()
         return await message.answer(
             f"❌ Недостаточно средств. Нужно {cost} ⚡",
@@ -139,7 +140,9 @@ async def on_prompt(message: types.Message, state: FSMContext):
             return
 
         # Списываем баланс только при успехе
-        charge(user_id, cost)
+        await charge(user_id, cost)
+
+        current_balance = await db.get_balance(user_id)
 
         file = BufferedInputFile(
             img_bytes,
@@ -151,7 +154,7 @@ async def on_prompt(message: types.Message, state: FSMContext):
             caption=(
                 f"✨ **Готово!**\n\n"
                 f"💰 Списано: `{cost}` ⚡\n"
-                f"Баланс: `{db.get_balance(user_id)}` ⚡"
+                f"Баланс: `{current_balance}` ⚡"
             ),
             reply_markup=main_kb(),
             parse_mode="Markdown"
@@ -178,7 +181,8 @@ async def start_video(message: types.Message, state: FSMContext):
     """Старт генерации видео"""
     user_id = message.from_user.id
 
-    if db.get_balance(user_id) < 5:
+    balance = await db.get_balance(user_id)
+    if balance < 5:
         return await message.answer("❌ Нужно минимум 5 ⚡.")
 
     await message.answer(
@@ -247,7 +251,7 @@ async def on_video_prompt(message: types.Message, state: FSMContext):
     model_key = f"kling_{duration}"
     cost = cost_for(model_key)
 
-    if not has_balance(user_id, cost):
+    if not await has_balance(user_id, cost):
         return await message.answer(
             "❌ Недостаточно генераций.",
             reply_markup=main_kb()
@@ -270,7 +274,7 @@ async def on_video_prompt(message: types.Message, state: FSMContext):
             )
             return
 
-        charge(user_id, cost)
+        await charge(user_id, cost)
 
         video_file = BufferedInputFile(
             video_bytes,

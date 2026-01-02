@@ -8,7 +8,7 @@ router = Router()
 async def balance(message: types.Message):
     user_id = message.from_user.id
     bal = db.get_balance(user_id)
-    ref_count = db.get_referrals_count(user_id)  # Счетчик из БД
+    ref_count = await db.get_referrals_count(user_id)  # Счетчик из БД
 
     bot_info = await message.bot.get_me()
     ref_link = f"https://t.me/{bot_info.username}?start={user_id}"

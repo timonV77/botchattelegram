@@ -130,3 +130,23 @@ async def log_payment(user_id: int, amount: int, status: str, order_id: str, raw
         })
     except Exception as e:
         logging.error(f"❌ Ошибка log_payment: {e}")
+
+async def get_referrals_count(user_id: int):
+    """Количество приглашённых пользователей."""
+    try:
+        response = await client.get(
+            "/rest/v1/users",
+            params={
+                "select": "*",
+                "count": "exact",
+                "referrer_id": f"eq.{int(user_id)}"
+            }
+        )
+        response.raise_for_status()
+        # Извлекаем количество из заголовка Content-Range
+        content_range = response.headers.get("Content-Range", "0-0/0")
+        count = content_range.split("/")[-1]
+        return int(count)
+    except Exception as e:
+        logging.error(f"❌ Ошибка get_referrals_count: {e}")
+        return 0

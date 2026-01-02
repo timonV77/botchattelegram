@@ -1,14 +1,16 @@
 import os
 import logging
-from aiogram import Router, types
+from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import FSInputFile
 
-from app.keyboards.reply import main_kb
+# Импортируем клавиатуры (убедись, что support_inline_kb добавлена в reply.py)
+from app.keyboards.reply import main_kb, support_inline_kb
 import database as db
 
 router = Router()
+
 
 @router.message(Command("start"))
 async def start_cmd(message: types.Message, state: FSMContext):
@@ -26,12 +28,10 @@ async def start_cmd(message: types.Message, state: FSMContext):
         if payload.isdigit():
             referrer_id = int(payload)
             if referrer_id != user_id:
-                # ВАЖНО: используем await, так как функция в db асинхронная
                 await db.set_referrer(user_id, referrer_id)
                 logging.info(f"🔗 Установлен реферер {referrer_id} для {user_id}")
 
     # 2. РЕГИСТРАЦИЯ И ПОЛУЧЕНИЕ БАЛАНСА
-    # await обязателен, иначе баланс будет объектом-пустышкой
     try:
         balance = await db.get_balance(user_id)
     except Exception as e:
@@ -52,7 +52,7 @@ async def start_cmd(message: types.Message, state: FSMContext):
         parse_mode="HTML"
     )
 
-    # 4. ОТПРАВКА ОФЕРТЫ (С проверкой наличия файла)
+    # 4. ОТПРАВКА ОФЕРТЫ
     offer_path = "assets/offer.pdf"
     if os.path.exists(offer_path):
         try:
@@ -62,11 +62,22 @@ async def start_cmd(message: types.Message, state: FSMContext):
             )
         except Exception as e:
             logging.error(f"❌ Не удалось отправить PDF: {e}")
-    else:
-        # Если файла нет, просто пишем текст, чтобы бот не "падал"
-        await message.answer(
-            "📄 <i>Ознакомиться с договором оферты вы можете в описании нашего профиля.</i>",
-            parse_mode="HTML"
-        )
 
-# Не забываем экспортировать роутер
+
+# --- НОВЫЙ ХЕНДЛЕР ДЛЯ КНОПКИ ПОМОЩИ ---
+
+@router.message(F.text == "🆘 Помощь")
+async def help_handler(message: types.Message):
+    """Обработка нажатия на кнопку Помощь."""
+    help_text = (
+        "💎 <b>Нужна помощь?</b>\n\n"
+        "Если у тебя возникли проблемы с генерацией, оплатой или есть предложения по улучшению бота — напиши нашему менеджеру.\n\n"
+        "👤 <b>Поддержка:</b> @essmirraaa"
+    )
+
+    # Отправляем сообщение с Inline-кнопкой ссылкой
+    await message.answer(
+        help_text,
+        reply_markup=support_inline_kb(),
+        parse_mode="HTML"
+    )

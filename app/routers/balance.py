@@ -24,4 +24,8 @@ async def balance(message: types.Message):
         f"_Нажмите на ссылку, чтобы скопировать._"
     )
 
-    await message.answer(text, parse_mode="Markdown")
+    await message.answer(
+        text,
+        parse_mode="Markdown",
+        timeout=60  # увеличиваем таймаут до 60 секунд
+    )

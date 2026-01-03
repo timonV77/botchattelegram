@@ -9,7 +9,7 @@ load_dotenv()
 POLZA_API_KEY = os.getenv("POLZA_API_KEY")
 BASE_URL = "https://api.polza.ai/api/v1"
 
-# Синхронизируем ID моделей с актуальными для Polza AI
+# Актуальные ID моделей
 MODELS_MAP = {
     "nanabanana": "nano-banana",
     "nanabanana_pro": "gemini-3-pro-image-preview",
@@ -20,7 +20,7 @@ MODELS_MAP = {
 
 
 async def _download_content_bytes(url: str):
-    """Скачивание результата с расширенной логикой определения расширения."""
+    """Скачивание результата с определением расширения."""
     timeout = aiohttp.ClientTimeout(total=300)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         for attempt in range(5):
@@ -29,95 +29,65 @@ async def _download_content_bytes(url: str):
                     if response.status == 200:
                         data = await response.read()
                         content_type = response.headers.get("Content-Type", "").lower()
-
-                        # Определяем расширение
-                        ext = "png"
-                        if "video" in content_type or "mp4" in url:
-                            ext = "mp4"
-                        elif "jpeg" in content_type or "jpg" in url:
-                            ext = "jpg"
-
-                        logging.info(f"✅ Файл скачан: {len(data)} байт, тип: {ext}")
+                        ext = "mp4" if "video" in content_type or "mp4" in url else "jpg"
+                        logging.info(f"✅ Файл скачан: {len(data)} байт")
                         return data, ext
-                    elif response.status == 404:
-                        logging.warning(f"⚠️ Файл еще не доступен по ссылке (404), ждем...")
-                        await asyncio.sleep(5)
+                    await asyncio.sleep(5)
             except Exception as e:
-                logging.error(f"⚠️ Ошибка скачивания (попытка {attempt + 1}): {e}")
+                logging.error(f"⚠️ Ошибка скачивания: {e}")
                 await asyncio.sleep(5)
     return None, None
 
 
 async def process_with_polza(prompt: str, model_type: str, image_url: str = None):
-    """Генерация ИЗОБРАЖЕНИЯ с учетом обязательного aspect_ratio."""
-    if not POLZA_API_KEY:
-        logging.error("❌ POLZA_API_KEY не найден")
-        return None, None
-
+    """Генерация ИЗОБРАЖЕНИЯ."""
+    if not POLZA_API_KEY: return None, None
     model_id = MODELS_MAP.get(model_type)
     headers = {"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"}
 
-    # Согласно документации, aspect_ratio — ОБЯЗАТЕЛЬНОЕ поле для новых моделей
     payload = {
         "model": model_id,
         "prompt": prompt.strip(),
         "aspect_ratio": "1:1"
     }
-
     if image_url:
         payload["filesUrl"] = [image_url]
-        # strength НЕ добавляем для nanabanana_pro (gemini-3),
-        # он используется только в классических Image-to-Image моделях
         if model_type != "nanabanana_pro":
             payload["strength"] = 0.7
 
-    # Для Pro версии также можно явно указать разрешение
     if model_type == "nanabanana_pro":
         payload["resolution"] = "1K"
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            # Логируем запрос для отладки
-            logging.info(f"📤 Отправка в Polza ({model_type}): {payload}")
-
+    async with aiohttp.ClientSession() as session:
+        try:
+            logging.info(f"📤 Запрос фото {model_type}: {payload}")
             async with session.post(f"{BASE_URL}/images/generations", headers=headers, json=payload) as response:
                 data = await response.json()
                 request_id = data.get("requestId")
                 if not request_id:
-                    logging.error(f"❌ API Error на старте: {data}")
+                    logging.error(f"❌ API Error: {data}")
                     return None, None
 
-            logging.info(f"⏳ Ожидание фото {model_type} (ID: {request_id})...")
-
-            for attempt in range(60):
+            for _ in range(60):
                 await asyncio.sleep(7)
-                async with session.get(f"{BASE_URL}/images/{request_id}", headers=headers) as status_resp:
-                    if status_resp.status != 200: continue
-                    result = await status_resp.json()
+                async with session.get(f"{BASE_URL}/images/{request_id}", headers=headers) as resp:
+                    if resp.status != 200: continue
+                    result = await resp.json()
 
-                    result_url = (
-                            result.get("url") or
-                            (result.get("images")[0] if result.get("images") else None) or
-                            (result.get("output", [None])[0] if isinstance(result.get("output"), list) else result.get(
-                                "output"))
-                    )
+                    url = result.get("url") or (result.get("images")[0] if result.get("images") else None)
+                    if url and url.startswith("http"):
+                        return await _download_content_bytes(url)
 
-                    if result_url and result_url.startswith("http"):
-                        return await _download_content_bytes(result_url)
-
-                    status = result.get("status", "").lower()
-                    if status in ("error", "failed", "rejected"):
-                        logging.error(f"❌ API отказало в генерации: {result}")
+                    if result.get("status", "").lower() in ("failed", "error"):
+                        logging.error(f"❌ API отказало (FAILED): {result}")
                         return None, None
-
-            logging.error(f"⌛ Тайм-аут ожидания фото {request_id}")
-    except Exception as e:
-        logging.error(f"❌ Сетевая ошибка Polza: {e}")
+        except Exception as e:
+            logging.error(f"❌ Сетевая ошибка: {e}")
     return None, None
 
 
 async def process_video_polza(prompt: str, model_type: str, image_url: str = None):
-    """Генерация ВИДЕО с циклом опроса (Polling)."""
+    """Генерация ВИДЕО."""
     if not POLZA_API_KEY: return None, None
     model_id = MODELS_MAP.get(model_type)
     headers = {"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"}
@@ -126,33 +96,26 @@ async def process_video_polza(prompt: str, model_type: str, image_url: str = Non
     if image_url:
         payload["filesUrl"] = [image_url]
 
-    try:
-        async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession() as session:
+        try:
+            logging.info(f"📤 Запрос видео {model_type}: {payload}")
             async with session.post(f"{BASE_URL}/videos/generations", headers=headers, json=payload) as response:
                 data = await response.json()
                 request_id = data.get("requestId")
-                if not request_id:
-                    logging.error(f"❌ API Video Error: {data}")
-                    return None, None
+                if not request_id: return None, None
 
-            logging.info(f"⏳ Ожидание видео {model_type} (ID: {request_id})...")
-
-            for attempt in range(120):
+            for _ in range(120):
                 await asyncio.sleep(10)
-                async with session.get(f"{BASE_URL}/videos/{request_id}", headers=headers) as status_resp:
-                    if status_resp.status != 200:
-                        continue
+                async with session.get(f"{BASE_URL}/videos/{request_id}", headers=headers) as resp:
+                    if resp.status != 200: continue
+                    result = await resp.json()
 
-                    result = await status_resp.json()
-                    status = result.get("status", "").lower()
                     video_url = result.get("url") or result.get("videoUrl")
-
                     if video_url and video_url.startswith("http"):
                         return await _download_content_bytes(video_url)
 
-                    if status in ("error", "failed"):
-                        logging.error(f"❌ Ошибка генерации видео: {result}")
+                    if result.get("status", "").lower() in ("failed", "error"):
                         break
-    except Exception as e:
-        logging.error(f"❌ Критическая ошибка видео-модуля: {e}")
+        except Exception as e:
+            logging.error(f"❌ Ошибка видео: {e}")
     return None, None

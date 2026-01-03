@@ -1,3 +1,4 @@
+import aiohttp
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
@@ -7,8 +8,9 @@ from .config import get_settings
 
 settings = get_settings()
 
-# Создаем сессию без передачи коннектора (он создастся сам внутри сессии)
-session = AiohttpSession()
+# Специальный коннектор для борьбы с ServerDisconnectedError
+connector = aiohttp.TCPConnector(force_close=True, enable_cleanup_closed=True)
+session = AiohttpSession(connector=connector)
 
 bot = Bot(
     token=settings.bot_token,
@@ -18,6 +20,5 @@ bot = Bot(
     )
 )
 
-# Хранилище для состояний (FSM)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)

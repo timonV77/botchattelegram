@@ -33,11 +33,11 @@ def support_inline_kb():
     )
 
 # Кнопки выбора тарифов для хендлера "💳 Пополнить"
-def deposit_inline_kb():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="⭐ 10 генераций — 290₽", callback_data="buy_10")],
-            [InlineKeyboardButton(text="🔥 50 генераций — 990₽", callback_data="buy_50")],
-            [InlineKeyboardButton(text="💎 Безлимит на день — 1490₽", callback_data="buy_unlimited")]
-        ]
-    )
+def deposit_inline_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    # Формат: pay_КоличествоГенераций_ЦенаВРублях
+    builder.row(InlineKeyboardButton(text="⚡ 10 генераций — 149₽", callback_data="pay_10_149"))
+    builder.row(InlineKeyboardButton(text="⚡ 25 генераций — 375₽", callback_data="pay_25_375"))
+    builder.row(InlineKeyboardButton(text="⚡ 45 генераций — 675₽", callback_data="pay_45_675"))
+    builder.row(InlineKeyboardButton(text="⚡ 60 генераций — 900₽", callback_data="pay_60_900"))
+    return builder.as_markup()

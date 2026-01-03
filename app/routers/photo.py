@@ -135,43 +135,10 @@ async def on_prompt(message: types.Message, state: FSMContext):
 
 
 # ---------------- ОЖИВЛЕНИЕ ФОТО (ВИДЕО) ----------------
-
-@router.message(F.text == "🎬 Оживить фото")
-async def start_video(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    balance = await db.get_balance(user_id)
-    if balance < 5:
-        return await message.answer("❌ Нужно минимум 5 ⚡.", reply_markup=main_kb())
-
-    await message.answer("📸 **Пришлите фото для оживления:**", reply_markup=cancel_kb(), parse_mode="Markdown")
-    await state.set_state(PhotoProcess.waiting_for_video_photo)
-
-
-@router.message(PhotoProcess.waiting_for_video_photo, F.photo)
-async def on_video_photo(message: types.Message, state: FSMContext):
-    await state.update_data(photo_id=message.photo[-1].file_id)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="5 секунд (5 ⚡)", callback_data="v_dur_5")],
-        [InlineKeyboardButton(text="10 секунд (10 ⚡)", callback_data="v_dur_10")]
-    ])
-    await message.answer("⏳ **Выберите длительность:**", reply_markup=kb, parse_mode="Markdown")
-    await state.set_state(PhotoProcess.waiting_for_duration)
-
-
-@router.callback_query(F.data.startswith("v_dur_"))
-async def on_duration(callback: types.CallbackQuery, state: FSMContext):
-    duration = int(callback.data.split("_")[2])
-    await state.update_data(duration=duration)
-    await callback.message.edit_text(f"✅ Длительность: **{duration} сек**", parse_mode="Markdown")
-    await callback.message.answer("✍️ **Опишите движение:**", reply_markup=cancel_kb(), parse_mode="Markdown")
-    await state.set_state(PhotoProcess.waiting_for_video_prompt)
-    await callback.answer()
-
-
 @router.message(PhotoProcess.waiting_for_video_prompt)
 async def on_video_prompt(message: types.Message, state: FSMContext):
     if not message.text:
-        return await message.answer("✍️ Пожалуйста, опишите движение.")
+        return await message.answer("✍️ Пожалуйста, опишите движение текстом.")
 
     video_prompt = message.text.strip()
     user_id = message.from_user.id
@@ -179,24 +146,53 @@ async def on_video_prompt(message: types.Message, state: FSMContext):
     duration = data.get("duration", 5)
     model_key = f"kling_{duration}"
 
+    # Проверка баланса
     if not await has_balance(user_id, model_key):
-        return await message.answer("❌ Недостаточно генераций.", reply_markup=main_kb())
+        await state.clear()  # Сбрасываем стейт, чтобы юзер не застрял
+        return await message.answer("❌ Недостаточно генераций для этой длительности.", reply_markup=main_kb())
 
-    status_msg = await message.answer(f"🎬 **Создаю видео...**", parse_mode="Markdown")
+    status_msg = await message.answer(f"🎬 **Отправка запроса в нейросеть...**\n_Это может занять некоторое время_",
+                                      parse_mode="Markdown")
 
     try:
+        # 1. Получаем прямую ссылку на фото через сервер Telegram
         photo_url = await get_telegram_photo_url(message.bot, data["photo_id"])
-        video_bytes, _ = await generate_video(photo_url, video_prompt, model_key)
+        logging.info(f"--- 🎬 Запуск видео: {model_key} для {user_id} ---")
+
+        # 2. Вызов API
+        video_bytes, error_msg = await generate_video(photo_url, video_prompt, model_key)
 
         if not video_bytes:
-            await message.answer("⚠️ Ошибка видео.", reply_markup=main_kb())
+            # Если API вернуло ошибку или пустоту
+            logging.error(f"⚠️ [API ERROR] Пользователь {user_id}: {error_msg}")
+            await message.answer(
+                f"⚠️ **Нейросеть не смогла обработать запрос.**\n\n"
+                f"Причина: {error_msg or 'Технический сбой'}\n"
+                "Попробуйте использовать другое фото или более простое описание.",
+                reply_markup=main_kb()
+            )
+            await state.clear()
             return
 
+        # 3. Списание баланса только после успешного получения байтов
         await charge(user_id, model_key)
+
+        # 4. Отправка видео
         video_file = BufferedInputFile(video_bytes, filename=f"video_{user_id}.mp4")
-        await message.answer_video(video=video_file, caption=f"✅ **Готово!**", reply_markup=main_kb())
+        await message.answer_video(
+            video=video_file,
+            caption=f"✅ **Ваше видео готово!**\n🔥 Модель: {model_key}",
+            reply_markup=main_kb(),
+            parse_mode="Markdown"
+        )
         await state.clear()
+
     except Exception as e:
-        await message.answer("❌ Ошибка при создании видео.", reply_markup=main_kb())
+        logging.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА ВИДЕО: {e}", exc_info=True)
+        await message.answer("❌ Произошла ошибка на сервере при генерации. Попробуйте позже.", reply_markup=main_kb())
+        await state.clear()
     finally:
-        await status_msg.delete()
+        try:
+            await status_msg.delete()
+        except:
+            pass

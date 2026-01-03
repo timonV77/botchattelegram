@@ -9,17 +9,16 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 # Настройка Redis
 try:
-    redis = Redis(host='localhost', port=6379, decode_responses=False)
+    # decode_responses=False важно для корректной работы RedisStorage в aiogram
+    redis = Redis(host='localhost', port=6379)
     storage = RedisStorage(redis=redis)
     print("✅ Redis подключен успешно")
 except Exception as e:
     print(f"⚠️ Redis не доступен ({e}), использую MemoryStorage")
     storage = MemoryStorage()
 
-# Увеличиваем таймауты для стабильности при больших нагрузках
-session = AiohttpSession(
-    timeout=aiohttp.ClientTimeout(total=60, connect=10, sock_read=30)
-)
+# Упрощенная сессия без конфликтов типов
+session = AiohttpSession()
 
 bot = Bot(
     token=os.getenv("BOT_TOKEN"),

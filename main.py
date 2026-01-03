@@ -7,11 +7,10 @@ from aiohttp import web
 from app.bot import dp, bot
 from app.routers import setup_routers
 from app.routers.payments import prodamus_webhook
-import database as db  # Импортируем нашу новую базу
+import database as db
 
 async def main():
     # 0. Инициализируем пул соединений с PostgreSQL
-    # Это гарантирует мгновенные ответы бота с первой секунды
     await db.init_db()
     logging.info("✅ Пул соединений с БД инициализирован")
 
@@ -30,21 +29,21 @@ async def main():
     try:
         site = web.TCPSite(runner, "0.0.0.0", port)
         await site.start()
-        print(f"✅ Сервер платежей запущен на порту {port}")
+        logging.info(f"✅ Сервер платежей запущен на порту {port}")
     except OSError:
-        print(f"⚠️ Порт {port} уже занят. Если бот перезапустился — это нормально.")
+        logging.warning(f"⚠️ Порт {port} уже занят. Это нормально при перезапуске.")
 
-    print("🚀 Запуск бота (Long Polling: 300s timeout)...")
+    logging.info("🚀 Запуск бота (Long Polling)...")
 
     try:
-        # Удаляем вебхук и сбрасываем старые сообщения (drop_pending_updates=True)
-        # Это предотвратит "зависание" бота на старых запросах при старте
+        # Удаляем вебхук и сбрасываем старые сообщения
         await bot.delete_webhook(drop_pending_updates=True)
 
+        # ИСПРАВЛЕНО: Убран request_timeout, чтобы не было ошибки
+        # 'unsupported operand type(s) for +: ClientTimeout and int'
         await dp.start_polling(
             bot,
-            handle_as_tasks=True,
-            request_timeout=300
+            handle_as_tasks=True
         )
     except Exception as e:
         logging.error(f"❌ Критическая ошибка: {e}")
@@ -54,7 +53,6 @@ async def main():
         if bot.session:
             await bot.session.close()
         await runner.cleanup()
-        # Закрываем пул соединений с БД, чтобы не «вешать» PostgreSQL
         await db.close_db()
         logging.info("💤 Все соединения закрыты")
 
@@ -66,4 +64,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        print("\n🛑 Бот остановлен пользователем")
+        logging.info("🛑 Бот остановлен пользователем")

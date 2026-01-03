@@ -8,11 +8,10 @@ from .config import get_settings
 
 settings = get_settings()
 
-# Настраиваем таймауты: 30 секунд на подключение, 60 на чтение.
-# Это предотвратит "бесконечное" ожидание запросов.
-session = AiohttpSession(
-    timeout=ClientTimeout(total=60, connect=30)
-)
+# Оптимизируем сессию.
+# Мы убираем ClientTimeout отсюда, чтобы aiogram мог сам управлять
+# таймаутами через параметр request_timeout в методах или polling.
+session = AiohttpSession()
 
 bot = Bot(
     token=settings.bot_token,
@@ -22,6 +21,6 @@ bot = Bot(
     )
 )
 
-# Добавляем MemoryStorage для работы состояний (FSM)
+# Хранилище для состояний (FSM)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)

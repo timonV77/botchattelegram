@@ -7,16 +7,14 @@ from .config import get_settings
 
 settings = get_settings()
 
-# Мы не создаем TCPConnector здесь вручную, чтобы не вызывать RuntimeError.
-# Вместо этого мы настраиваем DefaultBotProperties с большим таймаутом.
-# Aiogram сам создаст сессию правильно при запуске.
+# Создаем сессию без передачи коннектора (он создастся сам внутри сессии)
+session = AiohttpSession()
 
 bot = Bot(
     token=settings.bot_token,
+    session=session,
     default=DefaultBotProperties(
-        parse_mode=ParseMode.HTML,
-        # Это решит проблему ServerDisconnectedError, давая боту 5 минут на отправку
-        request_timeout=300
+        parse_mode=ParseMode.HTML
     )
 )
 

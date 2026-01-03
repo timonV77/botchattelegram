@@ -87,13 +87,23 @@ async def on_prompt(message: types.Message, state: FSMContext):
 
         await charge(user_id, model)
         file = BufferedInputFile(img_bytes, filename=f"res.{ext or 'png'}")
-        await message.answer_photo(photo=file, caption="✨ Готово!", reply_markup=main_kb())
+
+        # Добавлен request_timeout для защиты от ServerDisconnectedError
+        await message.answer_photo(
+            photo=file,
+            caption="✨ **Готово!**",
+            reply_markup=main_kb(),
+            request_timeout=300
+        )
         await state.clear()
     except Exception as e:
         logging.error(f"❌ ОШИБКА ФОТО: {traceback.format_exc()}")
         await message.answer("❌ Ошибка при генерации.", reply_markup=main_kb())
     finally:
-        await status_msg.delete()
+        try:
+            await status_msg.delete()
+        except:
+            pass
 
 
 # ---------------- ОЖИВЛЕНИЕ ФОТО (ВИДЕО) ----------------
@@ -142,7 +152,6 @@ async def on_video_prompt(message: types.Message, state: FSMContext):
     status_msg = await message.answer("🎬 **Оживляем... Это займет 1-2 минуты.**")
     try:
         photo_url = await get_telegram_photo_url(message.bot, data["photo_id"])
-        # Вызываем генерацию (теперь с polling внутри network.py)
         video_bytes, ext = await generate_video(photo_url, message.text, model_key)
 
         if not video_bytes:
@@ -151,7 +160,14 @@ async def on_video_prompt(message: types.Message, state: FSMContext):
 
         await charge(user_id, model_key)
         video_file = BufferedInputFile(video_bytes, filename=f"video_{user_id}.mp4")
-        await message.answer_video(video=video_file, caption="✅ Видео готово!", reply_markup=main_kb())
+
+        # Добавлен request_timeout для защиты от ServerDisconnectedError при отправке видео
+        await message.answer_video(
+            video=video_file,
+            caption=f"✅ **Ваше видео готово!**\n🔥 Модель: {model_key}",
+            reply_markup=main_kb(),
+            request_timeout=300
+        )
         await state.clear()
     except Exception as e:
         logging.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА ВИДЕО: {traceback.format_exc()}")

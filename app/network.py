@@ -12,7 +12,7 @@ BASE_URL = "https://api.polza.ai/api/v1"
 # Синхронизируем ID моделей с актуальными для Polza AI
 MODELS_MAP = {
     "nanabanana": "nano-banana",
-    "nanabanana_pro": "gemini-3-pro-image-preview",  # Проверьте в консоли Polza, иногда это 'gemini-pro-vision'
+    "nanabanana_pro": "gemini-3-pro-image-preview",
     "seadream": "seedream-v4.5",
     "kling_5": "kling-v1-5",
     "kling_10": "kling-v1-10"
@@ -49,7 +49,7 @@ async def _download_content_bytes(url: str):
 
 
 async def process_with_polza(prompt: str, model_type: str, image_url: str = None):
-    """Генерация ИЗОБРАЖЕНИЯ с исправленным парсингом ответа."""
+    """Генерация ИЗОБРАЖЕНИЯ с учетом обязательного aspect_ratio."""
     if not POLZA_API_KEY:
         logging.error("❌ POLZA_API_KEY не найден")
         return None, None
@@ -57,13 +57,29 @@ async def process_with_polza(prompt: str, model_type: str, image_url: str = None
     model_id = MODELS_MAP.get(model_type)
     headers = {"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"}
 
-    payload = {"model": model_id, "prompt": prompt.strip()}
+    # Согласно документации, aspect_ratio — ОБЯЗАТЕЛЬНОЕ поле для новых моделей
+    payload = {
+        "model": model_id,
+        "prompt": prompt.strip(),
+        "aspect_ratio": "1:1"
+    }
+
     if image_url:
         payload["filesUrl"] = [image_url]
-        payload["strength"] = 0.7
+        # strength НЕ добавляем для nanabanana_pro (gemini-3),
+        # он используется только в классических Image-to-Image моделях
+        if model_type != "nanabanana_pro":
+            payload["strength"] = 0.7
+
+    # Для Pro версии также можно явно указать разрешение
+    if model_type == "nanabanana_pro":
+        payload["resolution"] = "1K"
 
     try:
         async with aiohttp.ClientSession() as session:
+            # Логируем запрос для отладки
+            logging.info(f"📤 Отправка в Polza ({model_type}): {payload}")
+
             async with session.post(f"{BASE_URL}/images/generations", headers=headers, json=payload) as response:
                 data = await response.json()
                 request_id = data.get("requestId")
@@ -73,13 +89,12 @@ async def process_with_polza(prompt: str, model_type: str, image_url: str = None
 
             logging.info(f"⏳ Ожидание фото {model_type} (ID: {request_id})...")
 
-            for attempt in range(60):  # 6 минут ожидания
+            for attempt in range(60):
                 await asyncio.sleep(7)
                 async with session.get(f"{BASE_URL}/images/{request_id}", headers=headers) as status_resp:
                     if status_resp.status != 200: continue
                     result = await status_resp.json()
 
-                    # ГИБКИЙ ПАРСИНГ (ищем URL везде, где он может быть)
                     result_url = (
                             result.get("url") or
                             (result.get("images")[0] if result.get("images") else None) or
@@ -122,18 +137,15 @@ async def process_video_polza(prompt: str, model_type: str, image_url: str = Non
 
             logging.info(f"⏳ Ожидание видео {model_type} (ID: {request_id})...")
 
-            for attempt in range(120):  # До 20 минут ожидания
+            for attempt in range(120):
                 await asyncio.sleep(10)
                 async with session.get(f"{BASE_URL}/videos/{request_id}", headers=headers) as status_resp:
                     if status_resp.status != 200:
-                        logging.warning(f"⚠️ Статус видео {status_resp.status}")
                         continue
 
                     result = await status_resp.json()
                     status = result.get("status", "").lower()
-
-                    # Ищем URL видео
-                    video_url = result.get("url") or (result.get("videoUrl"))
+                    video_url = result.get("url") or result.get("videoUrl")
 
                     if video_url and video_url.startswith("http"):
                         return await _download_content_bytes(video_url)
@@ -141,11 +153,6 @@ async def process_video_polza(prompt: str, model_type: str, image_url: str = Non
                     if status in ("error", "failed"):
                         logging.error(f"❌ Ошибка генерации видео: {result}")
                         break
-
-                    # Логируем прогресс, если API его отдает
-                    if attempt % 3 == 0:
-                        logging.info(f"🎬 Видео {request_id} еще в работе (попытка {attempt})...")
-
     except Exception as e:
         logging.error(f"❌ Критическая ошибка видео-модуля: {e}")
     return None, None

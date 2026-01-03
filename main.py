@@ -6,6 +6,8 @@ from aiohttp import web, ClientTimeout
 from aiogram import types
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.methods import TelegramMethod
+from aiogram.exceptions import TelegramNetworkError
 
 # Импортируем из твоего проекта
 from app.bot import dp, bot
@@ -20,13 +22,24 @@ WEBHOOK_PORT = 8443
 WEBHOOK_PATH = f"/webhook/{TOKEN}"
 WEBHOOK_URL = f"https://{WEBHOOK_HOST}:{WEBHOOK_PORT}{WEBHOOK_PATH}"
 
-# Пути к сертификатам
 WEBHOOK_SSL_CERT = "/root/botchattelegram/certs/cert.pem"
 WEBHOOK_SSL_PRIV = "/root/botchattelegram/certs/private.key"
 
 
+# --- МЕХАНИЗМ ПОВТОРОВ (RETRY) ---
+async def retry_middleware(handler, bot, method):
+    """Если отправка сообщения сорвалась из-за сети, пробуем еще раз"""
+    for attempt in range(3):
+        try:
+            return await handler(bot, method)
+        except TelegramNetworkError as e:
+            if attempt == 2: raise e
+            logging.warning(f"⚠️ Сетевая ошибка, попытка {attempt + 1}/3...")
+            await asyncio.sleep(1)
+    return await handler(bot, method)
+
+
 async def on_startup(bot):
-    """Действия при запуске: установка вебхука"""
     logging.info("⚙️ Настройка вебхука...")
     with open(WEBHOOK_SSL_CERT, 'rb') as cert_file:
         await bot.set_webhook(
@@ -39,72 +52,56 @@ async def on_startup(bot):
 
 
 async def main():
-    # 0. Настройка логирования
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-    # 1. Инициализируем БД
+    # 1. БД
     await db.init_db()
-    logging.info("✅ Пул соединений с БД инициализирован")
 
-    # 2. Настраиваем роутеры бота
+    # 2. Роутеры
     setup_routers(dp)
     dp.startup.register(on_startup)
 
-    # 3. Настройка HTTP сессии с увеличенными тайм-аутами для стабильности
-    # Это лечит ошибки 'Request timeout error'
-    timeout = ClientTimeout(total=60, connect=15, sock_read=15)
-    bot.session = AiohttpSession(timeout=timeout)
+    # 3. Настройка сессии с защитой от таймаутов
+    timeout = ClientTimeout(total=90, connect=20, sock_read=20, sock_connect=20)
+    session = AiohttpSession(timeout=timeout)
+    session.middleware(retry_middleware)  # Добавляем авто-повтор
+    bot.session = session
 
-    # 4. Создание веб-приложения aiohttp
+    # 4. Приложение
     app = web.Application()
-
-    # Эндпоинт для платежей Prodamus (теперь на порту 8443)
     app.router.add_post("/payments/prodamus", prodamus_webhook)
 
-    # Эндпоинт для Telegram вебхука
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
-        handle_as_tasks = True
+        handle_as_tasks=True
     )
     webhook_requests_handler.register(app, path=WEBHOOK_PATH)
-
-    # Связываем aiogram с приложением
     setup_application(app, dp, bot=bot)
 
-    # 5. Настройка SSL (HTTPS)
+    # 5. SSL
     context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
     context.load_cert_chain(WEBHOOK_SSL_CERT, WEBHOOK_SSL_PRIV)
 
-    # 6. Запуск сервера
+    # 6. Старт
     runner = web.AppRunner(app)
     await runner.setup()
-
     site = web.TCPSite(runner, "0.0.0.0", WEBHOOK_PORT, ssl_context=context)
 
     try:
         await site.start()
-        logging.info(f"📡 Сервер запущен на порту {WEBHOOK_PORT}")
-        logging.info(f"🔗 URL платежей: https://{WEBHOOK_HOST}:{WEBHOOK_PORT}/payments/prodamus")
-
-        # Держим сервис запущенным
+        logging.info(f"📡 Сервер активен: {WEBHOOK_PORT}")
         await asyncio.Event().wait()
-
     except Exception as e:
-        logging.error(f"❌ Критическая ошибка при работе сервера: {e}")
+        logging.error(f"❌ Ошибка: {e}")
     finally:
-        logging.info("♻️ Закрытие ресурсов...")
         await bot.session.close()
         await runner.cleanup()
         await db.close_db()
-        logging.info("💤 Все соединения закрыты")
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logging.info("🛑 Бот остановлен")
+        logging.info("🛑 Остановлено")

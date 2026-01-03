@@ -134,6 +134,60 @@ async def on_prompt(message: types.Message, state: FSMContext):
         await status_msg.delete()
 
 
+@router.message(F.text == "🎬 Оживить фото")
+async def start_video_process(message: types.Message, state: FSMContext):
+    """Хендлер нажатия на кнопку в главном меню"""
+    await state.clear()  # Сбрасываем старые состояния
+    user_id = message.from_user.id
+    balance = await db.get_balance(user_id)
+
+    # Минимальная цена видео обычно 5 или 10
+    if balance < 5:
+        return await message.answer(
+            f"❌ У вас недостаточно ⚡ (нужно минимум 5 для видео).\nВаш баланс: {balance}",
+            reply_markup=main_kb()
+        )
+
+    await message.answer(
+        "📸 **Пришлите фотографию для оживления:**",
+        reply_markup=cancel_kb(),
+        parse_mode="Markdown"
+    )
+    await state.set_state(PhotoProcess.waiting_for_video_photo)
+
+
+@router.message(PhotoProcess.waiting_for_video_photo, F.photo)
+async def on_video_photo_received(message: types.Message, state: FSMContext):
+    """Ловим фото после нажатия кнопки оживления"""
+    await state.update_data(photo_id=message.photo[-1].file_id)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="5 секунд (5 ⚡)", callback_data="v_dur_5")],
+        [InlineKeyboardButton(text="10 секунд (10 ⚡)", callback_data="v_dur_10")]
+    ])
+
+    await message.answer(
+        "⏳ **Выберите длительность будущего видео:**",
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
+    await state.set_state(PhotoProcess.waiting_for_duration)
+
+
+@router.callback_query(F.data.startswith("v_dur_"))
+async def on_video_duration_selected(callback: types.CallbackQuery, state: FSMContext):
+    """Ловим выбор длительности"""
+    duration = int(callback.data.split("_")[2])
+    await state.update_data(duration=duration)
+
+    await callback.message.edit_text(f"✅ Выбрано: **{duration} секунд**", parse_mode="Markdown")
+    await callback.message.answer(
+        "✍️ **Опишите движение на видео:**\n(Например: человек улыбается, волосы развеваются на ветру)",
+        reply_markup=cancel_kb(),
+        parse_mode="Markdown"
+    )
+    await state.set_state(PhotoProcess.waiting_for_video_prompt)
+    await callback.answer()
 # ---------------- ОЖИВЛЕНИЕ ФОТО (ВИДЕО) ----------------
 @router.message(PhotoProcess.waiting_for_video_prompt)
 async def on_video_prompt(message: types.Message, state: FSMContext):

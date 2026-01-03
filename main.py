@@ -68,6 +68,7 @@ async def main():
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot
+        handle_as_tasks = True
     )
     webhook_requests_handler.register(app, path=WEBHOOK_PATH)
 

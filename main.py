@@ -67,7 +67,7 @@ async def main():
     # Эндпоинт для Telegram вебхука
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
-        bot=bot
+        bot=bot,
         handle_as_tasks = True
     )
     webhook_requests_handler.register(app, path=WEBHOOK_PATH)

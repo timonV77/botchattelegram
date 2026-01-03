@@ -1,80 +1,63 @@
 import os
 import aiohttp
 import asyncio
+import logging
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# 🔑 API-ключ Polza
 POLZA_API_KEY = os.getenv("POLZA_API_KEY")
-
-# 🌐 Базовый URL Polza API
 BASE_URL = "https://api.polza.ai/api/v1"
 
-# 🧠 Соответствие внутренних имён моделей и моделей Polza
+# Добавили модели видео (Kling), чтобы видео начало создаваться!
 MODELS_MAP = {
     "nanabanana": "nano-banana",
     "nanabanana_pro": "gemini-3-pro-image-preview",
-    "seadream": "seedream-v4.5"
+    "seadream": "seedream-v4.5",
+    "kling_5": "kling-v1-5",  # Добавьте актуальный ID модели из доков Polza
+    "kling_10": "kling-v1-10"
 }
 
 
 async def _download_content_bytes(url: str):
-    """
-    Скачивание результата генерации (изображение или видео)
-    с повторными попытками
-    """
-    timeout = aiohttp.ClientTimeout(total=600)  # до 10 минут
+    """Скачивание результата генерации с повторными попытками."""
+    timeout = aiohttp.ClientTimeout(total=300)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         for attempt in range(5):
             try:
                 async with session.get(url) as response:
                     if response.status == 200:
                         content_type = response.headers.get("Content-Type", "").lower()
-
-                        # Определяем расширение файла
                         ext = "png"
                         if "jpeg" in content_type:
                             ext = "jpg"
-                        elif "video" in content_type:
+                        elif "video" in content_type or "mp4" in url:
                             ext = "mp4"
 
-                        return await response.read(), ext
-
+                        data = await response.read()
+                        logging.info(f"✅ Файл успешно скачан ({len(data)} байт)")
+                        return data, ext
                     elif response.status == 404:
-                        # Результат ещё не готов
-                        await asyncio.sleep(8)
-
+                        await asyncio.sleep(5)
             except Exception as e:
-                print(f"⚠️ Ошибка скачивания (попытка {attempt + 1}): {e}")
+                logging.error(f"⚠️ Ошибка скачивания (попытка {attempt + 1}): {e}")
                 await asyncio.sleep(5)
-
     return None, None
 
 
 async def process_with_polza(prompt: str, model_type: str, image_url: str = None):
-    """
-    Генерация ИЗОБРАЖЕНИЯ через Polza AI
-    Возвращает: (bytes, расширение) или (None, None)
-    """
+    """Генерация ИЗОБРАЖЕНИЯ."""
     if not POLZA_API_KEY:
-        print("❌ POLZA_API_KEY не найден")
+        logging.error("❌ POLZA_API_KEY не найден")
         return None, None
 
     model_id = MODELS_MAP.get(model_type)
     if not model_id:
-        print(f"❌ Неизвестная модель: {model_type}")
+        logging.error(f"❌ Неизвестная модель в MAP: {model_type}")
         return None, None
 
-    headers = {
-        "Authorization": f"Bearer {POLZA_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    payload = {
-        "model": model_id,
-        "prompt": prompt.strip()
-    }
+    headers = {"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"}
+    payload = {"model": model_id, "prompt": prompt.strip()}
 
     if image_url:
         payload["filesUrl"] = [image_url]
@@ -83,104 +66,61 @@ async def process_with_polza(prompt: str, model_type: str, image_url: str = None
     if model_type == "nanabanana_pro":
         payload["resolution"] = "1K"
 
-    session_timeout = aiohttp.ClientTimeout(total=900)  # до 15 минут
-
     try:
-        async with aiohttp.ClientSession(timeout=session_timeout) as session:
-            async with session.post(
-                f"{BASE_URL}/images/generations",
-                headers=headers,
-                json=payload
-            ) as response:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"{BASE_URL}/images/generations", headers=headers, json=payload) as response:
                 data = await response.json()
                 request_id = data.get("requestId")
                 if not request_id:
-                    print(f"❌ Не получен requestId: {data}")
+                    logging.error(f"❌ API Error: {data}")
                     return None, None
 
-            for _ in range(150):
+            logging.info(f"⏳ Ожидание фото (ID: {request_id})...")
+            for _ in range(100):  # Ожидание до 10 минут
                 await asyncio.sleep(6)
-                async with session.get(
-                    f"{BASE_URL}/images/{request_id}",
-                    headers=headers
-                ) as status_response:
-                    if status_response.status != 200:
-                        continue
-                    result = await status_response.json()
-                    result_url = (
-                        result.get("url")
-                        or (result.get("images")[0] if result.get("images") else None)
-                    )
+                async with session.get(f"{BASE_URL}/images/{request_id}", headers=headers) as status_resp:
+                    if status_resp.status != 200: continue
+                    result = await status_resp.json()
+
+                    # Проверка готовности (у разных моделей Polza ключи могут отличаться)
+                    result_url = result.get("url") or (result.get("images")[0] if result.get("images") else None)
+
                     if result_url:
                         return await _download_content_bytes(result_url)
                     if result.get("status") in ("error", "failed"):
-                        print(f"❌ Генерация завершилась с ошибкой: {result}")
+                        logging.error(f"❌ Ошибка API: {result}")
                         break
-
     except Exception as e:
-        print(f"❌ Ошибка сети Polza (изображение): {e}")
-
+        logging.error(f"❌ Сетевая ошибка Polza: {e}")
     return None, None
 
 
 async def process_video_polza(prompt: str, model_type: str, image_url: str = None):
-    """
-    Генерация ВИДЕО через Polza AI
-    Возвращает: (bytes, расширение) или (None, None)
-    """
-    if not POLZA_API_KEY:
-        print("❌ POLZA_API_KEY не найден")
-        return None, None
-
+    """Генерация ВИДЕО."""
+    if not POLZA_API_KEY: return None, None
     model_id = MODELS_MAP.get(model_type)
-    if not model_id:
-        print(f"❌ Неизвестная модель: {model_type}")
-        return None, None
+    if not model_id: return None, None
 
-    headers = {
-        "Authorization": f"Bearer {POLZA_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    payload = {
-        "model": model_id,
-        "prompt": prompt.strip()
-    }
-
-    if image_url:
-        payload["filesUrl"] = [image_url]
-        payload["strength"] = 0.7
+    headers = {"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"}
+    payload = {"model": model_id, "prompt": prompt.strip()}
+    if image_url: payload["filesUrl"] = [image_url]
 
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=900)) as session:
-            async with session.post(
-                f"{BASE_URL}/videos/generations",
-                headers=headers,
-                json=payload
-            ) as response:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"{BASE_URL}/videos/generations", headers=headers, json=payload) as response:
                 data = await response.json()
                 request_id = data.get("requestId")
-                if not request_id:
-                    print(f"❌ Не получен requestId: {data}")
-                    return None, None
+                if not request_id: return None, None
 
-            for _ in range(150):
-                await asyncio.sleep(6)
-                async with session.get(
-                    f"{BASE_URL}/videos/{request_id}",
-                    headers=headers
-                ) as status_response:
-                    if status_response.status != 200:
-                        continue
-                    result = await status_response.json()
-                    result_url = result.get("url")
-                    if result_url:
-                        return await _download_content_bytes(result_url)
-                    if result.get("status") in ("error", "failed"):
-                        print(f"❌ Генерация видео завершилась с ошибкой: {result}")
-                        break
-
+            logging.info(f"⏳ Ожидание видео (ID: {request_id})...")
+            for _ in range(200):  # Видео делается дольше
+                await asyncio.sleep(10)
+                async with session.get(f"{BASE_URL}/videos/{request_id}", headers=headers) as status_resp:
+                    if status_resp.status != 200: continue
+                    result = await status_resp.json()
+                    if result.get("url"):
+                        return await _download_content_bytes(result.get("url"))
+                    if result.get("status") in ("error", "failed"): break
     except Exception as e:
-        print(f"❌ Ошибка сети Polza (видео): {e}")
-
+        logging.error(f"❌ Ошибка видео: {e}")
     return None, None

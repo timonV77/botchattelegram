@@ -2,18 +2,19 @@ import asyncio
 import os
 import logging
 from aiohttp import web
-from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 
 # Импортируем из твоего проекта
 from app.bot import dp, bot
 from app.routers import setup_routers
 from app.routers.payments import prodamus_webhook
-
+import database as db  # Импортируем нашу новую базу
 
 async def main():
+    # 0. Инициализируем пул соединений с PostgreSQL
+    # Это гарантирует мгновенные ответы бота с первой секунды
+    await db.init_db()
+    logging.info("✅ Пул соединений с БД инициализирован")
+
     # 1. Настраиваем роутеры
     setup_routers(dp)
 
@@ -31,19 +32,15 @@ async def main():
         await site.start()
         print(f"✅ Сервер платежей запущен на порту {port}")
     except OSError:
-        print(f"⚠️ Порт {port} уже занят")
-
-    # --- ИСПРАВЛЕНИЕ: Удаляем некорректную настройку ---
-    # Мы настраиваем ParseMode в app/bot.py, здесь ничего дублировать не нужно
+        print(f"⚠️ Порт {port} уже занят. Если бот перезапустился — это нормально.")
 
     print("🚀 Запуск бота (Long Polling: 300s timeout)...")
 
     try:
-        # Удаляем вебхук, чтобы не было конфликта с polling
+        # Удаляем вебхук и сбрасываем старые сообщения (drop_pending_updates=True)
+        # Это предотвратит "зависание" бота на старых запросах при старте
         await bot.delete_webhook(drop_pending_updates=True)
 
-        # ПРАВИЛЬНЫЙ СПОСОБ ЗАДАТЬ ТАЙМАУТ:
-        # Передаем request_timeout прямо в start_polling
         await dp.start_polling(
             bot,
             handle_as_tasks=True,
@@ -52,18 +49,21 @@ async def main():
     except Exception as e:
         logging.error(f"❌ Критическая ошибка: {e}")
     finally:
-        # Корректное закрытие сессий
+        # 3. КОРРЕКТНОЕ ЗАКРЫТИЕ
+        logging.info("♻️ Закрытие ресурсов...")
         if bot.session:
             await bot.session.close()
         await runner.cleanup()
-
+        # Закрываем пул соединений с БД, чтобы не «вешать» PostgreSQL
+        await db.close_db()
+        logging.info("💤 Все соединения закрыты")
 
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        format="%(asctime)s - %(levelname)s - %(message)s"
     )
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        print("\n🛑 Бот остановлен")
+        print("\n🛑 Бот остановлен пользователем")

@@ -2,6 +2,7 @@ import os
 import logging
 import asyncio
 import asyncpg
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -25,7 +26,6 @@ async def init_db():
         async with db_lock:
             if db_pool is None:
                 try:
-                    # Создаем пул с запасом соединений
                     db_pool = await asyncpg.create_pool(
                         **DB_CONFIG,
                         min_size=5,
@@ -36,14 +36,17 @@ async def init_db():
                     logging.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА БД: {e}")
                     raise e
 
+async def close_db():
+    """Закрытие пула при остановке бота."""
+    global db_pool
+    if db_pool:
+        await db_pool.close()
+        logging.info("💤 Пул соединений с БД закрыт")
+
 async def get_users_count():
     await init_db()
-    try:
-        async with db_pool.acquire() as conn:
-            return await conn.fetchval("SELECT COUNT(*) FROM users") or 0
-    except Exception as e:
-        logging.error(f"❌ Ошибка get_users_count: {e}")
-        return 0
+    async with db_pool.acquire() as conn:
+        return await conn.fetchval("SELECT COUNT(*) FROM users") or 0
 
 async def create_new_user(user_id: int, referrer_id: int = None):
     await init_db()
@@ -53,7 +56,6 @@ async def create_new_user(user_id: int, referrer_id: int = None):
                 "INSERT INTO users (user_id, balance, referrer_id) VALUES ($1, 1, $2) ON CONFLICT (user_id) DO NOTHING",
                 int(user_id), int(referrer_id) if referrer_id else None
             )
-            logging.info(f"👤 Пользователь {user_id} зарегистрирован")
             return True
     except Exception as e:
         logging.error(f"❌ Ошибка create_new_user {user_id}: {e}")
@@ -61,47 +63,33 @@ async def create_new_user(user_id: int, referrer_id: int = None):
 
 async def get_balance(user_id: int):
     await init_db()
-    try:
-        async with db_pool.acquire() as conn:
-            balance = await conn.fetchval("SELECT balance FROM users WHERE user_id = $1", int(user_id))
-            if balance is None:
-                # Если юзера нет, создаем его и возвращаем стартовый баланс 1
-                await create_new_user(user_id)
-                return 1
-            return int(balance)
-    except Exception as e:
-        logging.error(f"❌ Ошибка get_balance {user_id}: {e}")
-        return 0
+    async with db_pool.acquire() as conn:
+        balance = await conn.fetchval("SELECT balance FROM users WHERE user_id = $1", int(user_id))
+        if balance is None:
+            await create_new_user(user_id)
+            return 1
+        return int(balance)
 
 async def update_balance(user_id: int, amount: int):
     await init_db()
-    try:
-        async with db_pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE users SET balance = GREATEST(0, balance + $1) WHERE user_id = $2",
-                int(amount), int(user_id)
-            )
-            return True
-    except Exception as e:
-        logging.error(f"❌ Ошибка update_balance {user_id}: {e}")
-        return False
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE users SET balance = GREATEST(0, balance + $1) WHERE user_id = $2",
+            int(amount), int(user_id)
+        )
+        return True
 
-async def set_referrer(user_id: int, referrer_id: int):
-    if int(user_id) == int(referrer_id):
-        return
+async def get_referrer(user_id: int):
+    """Возвращает ID того, кто пригласил данного пользователя (нужно для платежей)"""
     await init_db()
-    try:
-        async with db_pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE users SET referrer_id = $1 WHERE user_id = $2 AND referrer_id IS NULL",
-                int(referrer_id), int(user_id)
-            )
-    except Exception as e:
-        logging.error(f"❌ Ошибка set_referrer: {e}")
+    async with db_pool.acquire() as conn:
+        return await conn.fetchval("SELECT referrer_id FROM users WHERE user_id = $1", int(user_id))
 
 async def log_payment(user_id: int, amount: int, status: str, order_id: str = None, raw_data: dict = None):
     await init_db()
     try:
+        # Превращаем raw_data в строку JSON для хранения в БД, если нужно
+        raw_json = json.dumps(raw_data) if raw_data else None
         async with db_pool.acquire() as conn:
             await conn.execute(
                 "INSERT INTO payment_logs (user_id, amount, status) VALUES ($1, $2, $3)",
@@ -112,9 +100,5 @@ async def log_payment(user_id: int, amount: int, status: str, order_id: str = No
 
 async def get_referrals_count(user_id: int):
     await init_db()
-    try:
-        async with db_pool.acquire() as conn:
-            return await conn.fetchval("SELECT COUNT(*) FROM users WHERE referrer_id = $1", int(user_id)) or 0
-    except Exception as e:
-        logging.error(f"❌ Ошибка get_referrals_count: {e}")
-        return 0
+    async with db_pool.acquire() as conn:
+        return await conn.fetchval("SELECT COUNT(*) FROM users WHERE referrer_id = $1", int(user_id)) or 0

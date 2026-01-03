@@ -4,7 +4,7 @@ import database as db
 router = Router()
 
 
-@router.message(F.text == "👤 Мой баланс")
+@router.message(F.text.contains("баланс") | F.text.contains("Баланс"))
 async def balance(message: types.Message):
     user_id = message.from_user.id
 

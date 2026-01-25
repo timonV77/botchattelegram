@@ -74,18 +74,16 @@ async def generate(image_url: str, prompt: str, model: str) -> Tuple[Optional[by
 
 
 async def generate_video(image_url: str, prompt: str, model: str = "kling_5") -> Tuple[Optional[bytes], Optional[str]]:
-    """Генерация видео с увеличенным временем ожидания."""
+    """Генерация видео с защитой от пустых ответов."""
     try:
         logging.info(f"--- 🎬 Запуск видео: {model} ---")
-        logging.info(f"🔗 URL исходника: {image_url}")
 
-        # Пытаемся получить видео
-        # ВНИМАНИЕ: Если внутри process_video_polza нет цикла ожидания (polling),
-        # этот запрос отвалится по таймауту на стороне nginx/aiohttp.
+        # 1. Запрашиваем видео у сетевого модуля
         result = await process_video_polza(prompt, model, image_url)
 
+        # 2. Если результат пустой (ошибка API или таймаут внутри network)
         if not result or not result[0]:
-            logging.warning(f"⚠️ [API] Видео модель {model} вернула пустоту. Возможно, задача еще в очереди.")
+            logging.warning(f"⚠️ [API] Видео модель {model} не смогла создать файл.")
             return None, None
 
         video_bytes, ext = result
@@ -93,7 +91,7 @@ async def generate_video(image_url: str, prompt: str, model: str = "kling_5") ->
         return video_bytes, ext
 
     except asyncio.TimeoutError:
-        logging.error(f"⌛ [TIMEOUT] API не ответило за отведенное время при генерации видео.")
+        logging.error(f"⌛ [TIMEOUT] Глобальный таймаут генерации видео.")
         return None, "timeout"
     except Exception as e:
         logging.error(f"❌ [VIDEO ERROR]: {traceback.format_exc()}")

@@ -3,6 +3,7 @@ import aiohttp
 import asyncio
 import logging
 import ssl
+from typing import Tuple, Optional
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -10,20 +11,24 @@ load_dotenv()
 POLZA_API_KEY = os.getenv("POLZA_API_KEY")
 BASE_URL = "https://api.polza.ai/api/v1"
 
-# Актуальные ID моделей
+# Актуальные ID моделей согласно документации
 MODELS_MAP = {
     "nanabanana": "nano-banana",
-    "nanabanana_pro": "gemini-3-pro-image-preview",
-    "seedream": "seedream-v4.5",
-    "kling_5": "kling-v1-5",
-    "kling_10": "kling-v1-10"
+    "nanabanana_pro": "gemini-1.5-pro",
+    "seedream": "sea-dream",
+    "kling_5": "kling2.5-image-to-video",
+    "kling_10": "kling2.5-image-to-video"
 }
 
+# Общий коннектор для обхода ошибок SSL на Windows/Linux
+ssl_context = ssl.create_default_context()
+ssl_context.check_hostname = False
+ssl_context.verify_mode = ssl.CERT_NONE
 
-async def _download_content_bytes(url: str):
-    """Скачивание результата (фото или видео) в байты с проверкой расширения."""
-    # Отключаем проверку SSL для стабильности на некоторых серверах
-    connector = aiohttp.TCPConnector(ssl=False)
+
+async def _download_content_bytes(url: str) -> Tuple[Optional[bytes], Optional[str]]:
+    """Скачивание результата (фото или видео) в байты."""
+    connector = aiohttp.TCPConnector(ssl=ssl_context)
     timeout = aiohttp.ClientTimeout(total=300)
 
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
@@ -33,27 +38,20 @@ async def _download_content_bytes(url: str):
                     if response.status == 200:
                         data = await response.read()
                         content_type = response.headers.get("Content-Type", "").lower()
-
-                        # Определяем расширение
-                        if "video" in content_type or "mp4" in url.lower():
-                            ext = "mp4"
-                        else:
-                            ext = "jpg"
-
-                        logging.info(f"✅ Файл успешно скачан ({len(data)} байт, расширение: {ext})")
+                        ext = "mp4" if "video" in content_type or "mp4" in url.lower() else "jpg"
+                        logging.info(f"✅ Файл скачан ({len(data)} байт, тип: {ext})")
                         return data, ext
-                    logging.warning(f"⚠️ Попытка скачивания {attempt + 1}: статус {response.status}")
                     await asyncio.sleep(3)
             except Exception as e:
-                logging.error(f"⚠️ Ошибка скачивания на попытке {attempt + 1}: {e}")
+                logging.error(f"⚠️ Ошибка скачивания (попытка {attempt + 1}): {e}")
                 await asyncio.sleep(5)
     return None, None
 
 
 async def process_with_polza(prompt: str, model_type: str, image_url: str = None):
-    """Генерация ИЗОБРАЖЕНИЯ (NanoBanana / SeaDream)."""
+    """Генерация ИЗОБРАЖЕНИЯ."""
     if not POLZA_API_KEY:
-        logging.error("❌ POLZA_API_KEY не найден в .env")
+        logging.error("❌ POLZA_API_KEY не найден")
         return None, None
 
     model_id = MODELS_MAP.get(model_type)
@@ -65,92 +63,87 @@ async def process_with_polza(prompt: str, model_type: str, image_url: str = None
         "aspect_ratio": "1:1"
     }
 
+    # Для фото Polza обычно принимает filesUrl или imageUrls (зависит от модели)
     if image_url:
         payload["filesUrl"] = [image_url]
-        if model_type != "nanabanana_pro":
-            payload["strength"] = 0.7
 
-    if model_type == "nanabanana_pro":
-        payload["resolution"] = "1K"
-
-    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
         try:
-            logging.info(f"📤 Запрос фото [{model_type}]: {payload}")
             async with session.post(f"{BASE_URL}/images/generations", headers=headers, json=payload) as response:
                 data = await response.json()
                 request_id = data.get("requestId")
-
                 if not request_id:
-                    logging.error(f"❌ Ошибка API (нет requestId): {data}")
+                    logging.error(f"❌ Ошибка фото: {data}")
                     return None, None
 
-            # Опрос готовности
-            for _ in range(60):  # Ждем до 7 минут
+            for _ in range(60):
                 await asyncio.sleep(7)
                 async with session.get(f"{BASE_URL}/images/{request_id}", headers=headers) as resp:
                     if resp.status != 200: continue
                     result = await resp.json()
-                    status = result.get("status", "").lower()
-
-                    if status == "success" or result.get("url"):
+                    if result.get("status") == "success" or result.get("url"):
                         url = result.get("url") or (result.get("images")[0] if result.get("images") else None)
-                        if url and url.startswith("http"):
-                            return await _download_content_bytes(url)
-
-                    if status in ("failed", "error"):
-                        logging.error(f"❌ Генерация фото провалена: {result}")
-                        return None, None
+                        return await _download_content_bytes(url)
+                    if result.get("status") in ("failed", "error"): break
         except Exception as e:
-            logging.error(f"❌ Сетевая ошибка (фото): {e}")
+            logging.error(f"❌ Ошибка сетевого запроса (фото): {e}")
     return None, None
 
 
 async def process_video_polza(prompt: str, model_type: str, image_url: str = None):
-    """Генерация ВИДЕО (Kling)."""
+    """Генерация ВИДЕО Kling 2.5 (5 или 10 сек)."""
     if not POLZA_API_KEY:
-        logging.error("❌ POLZA_API_KEY не найден в .env")
+        logging.error("❌ POLZA_API_KEY не найден")
         return None, None
 
-    model_id = MODELS_MAP.get(model_type)
+    model_id = MODELS_MAP.get(model_type, "kling2.5-image-to-video")
     headers = {"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"}
 
-    payload = {"model": model_id, "prompt": prompt.strip()}
-    if image_url:
-        payload["filesUrl"] = [image_url]
+    # Логика длительности: строго 5 или 10
+    duration = 10 if model_type == "kling_10" else 5
 
-    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
+    payload = {
+        "model": model_id,
+        "prompt": prompt.strip(),
+        "duration": duration,
+        "cfgScale": 0.5
+    }
+
+    # Важно: По документации для Kling используем imageUrls
+    if image_url:
+        payload["imageUrls"] = [image_url]
+
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
         try:
-            logging.info(f"📤 Запрос видео [{model_type}]: {payload}")
+            logging.info(f"📤 Отправка в Polza: {model_id} ({duration}s), URL: {image_url}")
             async with session.post(f"{BASE_URL}/videos/generations", headers=headers, json=payload) as response:
                 data = await response.json()
                 request_id = data.get("requestId")
 
                 if not request_id:
-                    logging.error(f"❌ Ошибка API (видео): {data}")
+                    logging.error(f"❌ Ошибка старта видео: {data}")
                     return None, None
-                logging.info(f"✅ Задача создана. ID: {request_id}. Начинаю ожидание...")
+                logging.info(f"✅ Задача принята: {request_id}. Ждем результат...")
 
-            # Опрос готовности (Polling)
-            for attempt in range(120):  # До 20 минут
+            # Polling: 180 попыток по 10 сек = 30 минут (для 10-секундных видео)
+            for attempt in range(180):
                 await asyncio.sleep(10)
                 async with session.get(f"{BASE_URL}/videos/{request_id}", headers=headers) as resp:
                     if resp.status != 200: continue
                     result = await resp.json()
                     status = result.get("status", "").lower()
 
-                    logging.info(f"⏳ Проверка видео {request_id}: статус {status}")
-
-                    # Проверяем все возможные поля с ссылкой
-                    video_url = result.get("url") or result.get("videoUrl")
-
-                    if (status == "success" or video_url) and video_url:
-                        if video_url.startswith("http"):
-                            return await _download_content_bytes(video_url)
+                    if status == "success" or result.get("url") or result.get("videoUrl"):
+                        video_url = result.get("url") or result.get("videoUrl")
+                        return await _download_content_bytes(video_url)
 
                     if status in ("failed", "error"):
-                        logging.error(f"❌ Генерация видео провалена: {result}")
+                        logging.error(f"❌ Поток API прерван: {result}")
                         break
 
+                if attempt % 6 == 0:  # Логируем статус раз в минуту
+                    logging.info(f"⏳ Видео {request_id} в процессе, статус: {status}")
+
         except Exception as e:
-            logging.error(f"❌ Ошибка при обработке видео: {e}")
+            logging.error(f"❌ Ошибка process_video_polza: {e}")
     return None, None

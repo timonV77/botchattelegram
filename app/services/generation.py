@@ -10,7 +10,7 @@ import database as db
 COSTS = {
     "nanabanana": 1,
     "nanabanana_pro": 5,
-    "seadream": 2,
+    "seedream": 2,
     "kling_5": 5,
     "kling_10": 10
 }

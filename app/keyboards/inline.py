@@ -20,7 +20,7 @@ def model_inline() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(
-                text="🎨 SeaDream 4.5 — 2 ⚡",
+                text="🎨 SeeDream 4.5 — 2 ⚡",
                 callback_data="model_seadream"
             )
         ],

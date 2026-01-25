@@ -18,7 +18,7 @@ router = Router()
 MODEL_NAMES = {
     "nanabanana": "🍌 NanoBanana",
     "nanabanana_pro": "💎 NanoBanana PRO",
-    "seadream": "🌊 SeaDream 4.5"
+    "seadream": "🌊 SeeDream 4.5"
 }
 
 # --- ФОНОВАЯ ФУНКЦИЯ ДЛЯ ФОТО ---

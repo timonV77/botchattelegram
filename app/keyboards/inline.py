@@ -21,7 +21,7 @@ def model_inline() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(
                 text="🎨 SeeDream 4.5 — 2 ⚡",
-                callback_data="model_seadream"
+                callback_data="model_seedream"
             )
         ],
         [

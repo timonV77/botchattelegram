@@ -20,7 +20,7 @@ router = Router()
 MODEL_NAMES = {
     "nanabanana": "🍌 NanoBanana",
     "nanabanana_pro": "💎 NanoBanana PRO",
-    "seadream": "🌊 SeeDream 4.5"
+    "seedream": "🌊 SeeDream 4.5"
 }
 
 

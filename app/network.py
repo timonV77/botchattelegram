@@ -41,6 +41,7 @@ async def _download_content_bytes(url: str) -> Tuple[Optional[bytes], Optional[s
                 await asyncio.sleep(5)
     return None, None
 
+
 async def process_with_polza(prompt: str, model_type: str, image_urls: List[str] = None):
     """Генерация ИЗОБРАЖЕНИЯ с поддержкой нескольких референсов."""
     if not POLZA_API_KEY:
@@ -55,29 +56,47 @@ async def process_with_polza(prompt: str, model_type: str, image_urls: List[str]
         "aspect_ratio": "1:1"
     }
 
-    # Если переданы фото, отправляем их как список
     if image_urls:
-        # Для большинства моделей Polza использует filesUrl
-        payload["filesUrl"] = image_urls
+        # Для моделей Gemini часто требуется именно imageUrls вместо filesUrl
+        # Мы будем отправлять оба поля для максимальной совместимости,
+        # либо выберем одно на основе типа модели
+        if "gemini" in model_id.lower():
+            payload["imageUrls"] = image_urls
+        else:
+            payload["filesUrl"] = image_urls
 
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
         try:
+            logging.info(
+                f"📤 Отправка запроса в Polza. Модель: {model_id}, Фото: {len(image_urls) if image_urls else 0}")
             async with session.post(f"{BASE_URL}/images/generations", headers=headers, json=payload) as response:
                 data = await response.json()
-                request_id = data.get("requestId")
-                if not request_id:
-                    logging.error(f"❌ Ошибка API: {data}")
+
+                # Добавим подробный лог ответа при ошибке
+                if response.status != 200:
+                    logging.error(f"❌ Ошибка API Polza ({response.status}): {data}")
                     return None, None
 
+                request_id = data.get("requestId")
+                if not request_id:
+                    logging.error(f"❌ requestId не получен: {data}")
+                    return None, None
+
+            # Ожидание результата (Polling)
             for _ in range(60):
                 await asyncio.sleep(7)
                 async with session.get(f"{BASE_URL}/images/{request_id}", headers=headers) as resp:
                     if resp.status != 200: continue
                     result = await resp.json()
-                    if result.get("status") == "success" or result.get("url"):
+                    status = result.get("status", "").lower()
+
+                    if status == "success" or result.get("url"):
                         url = result.get("url") or (result.get("images")[0] if result.get("images") else None)
                         return await _download_content_bytes(url)
-                    if result.get("status") in ("failed", "error"): break
+
+                    if status in ("failed", "error"):
+                        logging.error(f"❌ Генерация отклонена Polza: {result}")
+                        break
         except Exception as e:
             logging.error(f"❌ Сетевая ошибка: {e}")
     return None, None

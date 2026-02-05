@@ -13,7 +13,7 @@ BASE_URL = "https://api.polza.ai/api/v1"
 
 MODELS_MAP = {
     "nanabanana": "nano-banana",
-    "nanabanana_pro": "google/gemini-3-pro-image-preview",
+    "nanabanana_pro": "gemini-3-pro-image-preview",
     "seedream": "seedream-v4.5",
     "kling_5": "kling2.5-image-to-video",
     "kling_10": "kling2.5-image-to-video"

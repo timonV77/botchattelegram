@@ -12,7 +12,7 @@ POLZA_API_KEY = os.getenv("POLZA_API_KEY")
 BASE_URL = "https://api.polza.ai/api/v1"
 
 MODELS_MAP = {
-    "nanabanana": "google/gemini-2.5-flash-image",
+    "nanabanana": "nano-banana",
     "nanabanana_pro": "google/gemini-3-pro-image-preview",
     "seedream": "seedream-v4.5",
     "kling_5": "kling2.5-image-to-video",
@@ -43,23 +43,32 @@ async def _download_content_bytes(url: str) -> Tuple[Optional[bytes], Optional[s
 
 
 async def process_with_polza(prompt: str, model_type: str, image_urls: List[str] = None):
-    """Генерация ИЗОБРАЖЕНИЯ с поддержкой нескольких референсов."""
+    """Генерация ИЗОБРАЖЕНИЯ с расширенными настройками для Gemini Pro."""
     if not POLZA_API_KEY:
         return None, None
 
     model_id = MODELS_MAP.get(model_type)
     headers = {"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"}
 
+    # Базовый payload
     payload = {
         "model": model_id,
         "prompt": prompt.strip(),
         "aspect_ratio": "1:1"
     }
 
+    # СПЕЦИАЛЬНЫЕ НАСТРОЙКИ ДЛЯ GEMINI PRO (отключение фильтров)
+    if "gemini" in model_id.lower():
+        payload["safetySettings"] = [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+        ]
+
     if image_urls:
-        # Для моделей Gemini часто требуется именно imageUrls вместо filesUrl
-        # Мы будем отправлять оба поля для максимальной совместимости,
-        # либо выберем одно на основе типа модели
+        # Для Gemini Pro всегда используем imageUrls и пробуем передать
+        # только первую ссылку, если модель капризничает, но пока шлем список
         if "gemini" in model_id.lower():
             payload["imageUrls"] = image_urls
         else:
@@ -67,45 +76,49 @@ async def process_with_polza(prompt: str, model_type: str, image_urls: List[str]
 
     async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
         try:
-            logging.info(
-                f"📤 Отправка запроса в Polza. Модель: {model_id}, Фото: {len(image_urls) if image_urls else 0}")
+            logging.info(f"📤 Отправка в Polza: {model_id}. Фото: {len(image_urls) if image_urls else 0}")
             async with session.post(f"{BASE_URL}/images/generations", headers=headers, json=payload) as response:
                 data = await response.json()
 
-                # Разрешаем и 200, и 201
                 if response.status not in (200, 201):
-                    logging.error(f"❌ Реальная ошибка API Polza ({response.status}): {data}")
-                    return None, None
-
-                request_id = data.get("requestId")
-                logging.info(f"✅ Задача создана успешно (Статус {response.status}). ID: {request_id}")
-
-                if not request_id:
-                    logging.error(f"❌ requestId не найден в ответе: {data}")
+                    logging.error(f"❌ Ошибка API Polza ({response.status}): {data}")
                     return None, None
 
                 request_id = data.get("requestId")
                 if not request_id:
-                    logging.error(f"❌ requestId не получен: {data}")
+                    logging.error(f"❌ No requestId: {data}")
                     return None, None
 
-            # Ожидание результата (Polling)
+                logging.info(f"✅ Задача принята: {request_id}")
+
+            # Polling
             for _ in range(60):
                 await asyncio.sleep(7)
                 async with session.get(f"{BASE_URL}/images/{request_id}", headers=headers) as resp:
-                    if resp.status != 200: continue
+                    if resp.status != 200:
+                        continue
+
                     result = await resp.json()
                     status = result.get("status", "").lower()
 
-                    if status == "success" or result.get("url"):
-                        url = result.get("url") or (result.get("images")[0] if result.get("images") else None)
+                    if status == "success" or result.get("url") or result.get("images"):
+                        # Проверяем разные варианты ключа с результатом
+                        url = result.get("url")
+                        if not url and result.get("images"):
+                            url = result.get("images")[0]
+
+                        logging.info(f"✨ Успех! Ссылка получена.")
                         return await _download_content_bytes(url)
 
                     if status in ("failed", "error"):
-                        logging.error(f"❌ Генерация отклонена Polza: {result}")
+                        # Если упало, выводим причину, если она есть в ответе
+                        reason = result.get("failureReason") or result.get("message") or "Unknown error"
+                        logging.error(f"❌ Модель отклонила запрос: {reason}")
                         break
+
         except Exception as e:
             logging.error(f"❌ Сетевая ошибка: {e}")
+
     return None, None
 
 async def process_video_polza(prompt: str, model_type: str, image_url: str = None):

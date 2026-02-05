@@ -72,9 +72,16 @@ async def process_with_polza(prompt: str, model_type: str, image_urls: List[str]
             async with session.post(f"{BASE_URL}/images/generations", headers=headers, json=payload) as response:
                 data = await response.json()
 
-                # Добавим подробный лог ответа при ошибке
-                if response.status != 200:
-                    logging.error(f"❌ Ошибка API Polza ({response.status}): {data}")
+                # Разрешаем и 200, и 201
+                if response.status not in (200, 201):
+                    logging.error(f"❌ Реальная ошибка API Polza ({response.status}): {data}")
+                    return None, None
+
+                request_id = data.get("requestId")
+                logging.info(f"✅ Задача создана успешно (Статус {response.status}). ID: {request_id}")
+
+                if not request_id:
+                    logging.error(f"❌ requestId не найден в ответе: {data}")
                     return None, None
 
                 request_id = data.get("requestId")

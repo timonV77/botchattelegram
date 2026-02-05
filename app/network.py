@@ -58,7 +58,13 @@ async def process_with_polza(prompt: str, model_type: str, image_urls: List[str]
         "model": model_id,
         "prompt": prompt.strip(),
         "aspect_ratio": "1:1",  # Обязательный параметр
-        "resolution": "1K"  # Значение по умолчанию
+        "resolution": "1K",  # Значение по умолчанию
+        "safetySettings": [
+        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+    ]
     }
 
     # Поля filesUrl принимает массив строк (макс 14)

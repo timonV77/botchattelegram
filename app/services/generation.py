@@ -1,7 +1,7 @@
 import logging
 import traceback
 import asyncio
-from typing import Tuple, Optional, Any, List # Добавили List
+from typing import Tuple, Optional, Any, List
 from app.network import process_with_polza, process_video_polza
 import database as db
 
@@ -13,8 +13,10 @@ COSTS = {
     "kling_10": 10
 }
 
+
 def cost_for(model: str) -> int:
     return COSTS.get(model, 1)
+
 
 async def has_balance(user_id: int, model_or_cost) -> bool:
     try:
@@ -29,6 +31,7 @@ async def has_balance(user_id: int, model_or_cost) -> bool:
         logging.error(f"❌ Ошибка has_balance (User {user_id}): {e}")
         return False
 
+
 async def charge(user_id: int, model_or_cost):
     try:
         if isinstance(model_or_cost, str):
@@ -40,44 +43,57 @@ async def charge(user_id: int, model_or_cost):
     except Exception as e:
         logging.error(f"⚠️ Ошибка списания (User {user_id}): {e}")
 
-# Исправлено: теперь принимает List[str], так как в photo.py мы передаем список ссылок
-async def generate(image_urls: List[str], prompt: str, model: str) -> Tuple[Optional[bytes], Optional[str]]:
-    """Генерация изображений с поддержкой списка URL."""
+
+# ================================
+# 🔥 ГЕНЕРАЦИЯ ФОТО
+# ================================
+async def generate(image_urls: List[str], prompt: str, model: str) -> Tuple[
+    Optional[bytes], Optional[str], Optional[str]]:
+    """Генерация изображений. Возвращает (байты, расширение, прямая_ссылка)."""
     try:
         logging.info(f"--- 🛠 Запуск генерации фото: {model} ---")
-        logging.info(f"🔗 URL исходников: {image_urls}")
 
-        # Передаем список в network.py
+        # Получаем 3 значения из network.py
         result = await process_with_polza(prompt, model, image_urls)
 
-        if not result or not result[0]:
-            logging.warning(f"⚠️ [API] {model} вернул пустой результат.")
-            return None, None
+        if not result or len(result) < 3:
+            logging.warning(f"⚠️ [API] {model} вернул неполный результат.")
+            return None, None, None
 
-        img_bytes, ext = result
-        logging.info(f"✅ [УСПЕХ] {model} сгенерировал файл размером {len(img_bytes)} байт")
-        return img_bytes, ext
+        img_bytes, ext, result_url = result
+
+        logging.info(f"✅ [УСПЕХ] {model} готов. URL: {result_url}")
+        return img_bytes, ext, result_url
 
     except Exception as e:
-        logging.error(f"❌ [GENERATE ERROR]: {traceback.format_exc()}")
-        return None, None
+        logging.error(f"❌ [GENERATE ERROR]: {e}")
+        return None, None, None
 
-async def generate_video(image_url: str, prompt: str, model: str = "kling_5") -> Tuple[Optional[bytes], Optional[str]]:
+
+# ================================
+# 🔥 ГЕНЕРАЦИЯ ВИДЕО
+# ================================
+async def generate_video(image_url: str, prompt: str, model: str = "kling_5") -> Tuple[
+    Optional[bytes], Optional[str], Optional[str]]:
+    """Генерация видео. Возвращает (байты, расширение, прямая_ссылка)."""
     try:
         logging.info(f"--- 🎬 Запуск видео: {model} ---")
+
+        # Получаем 3 значения из network.py
         result = await process_video_polza(prompt, model, image_url)
 
-        if not result or not result[0]:
+        if not result or len(result) < 3:
             logging.warning(f"⚠️ [API] Видео модель {model} не смогла создать файл.")
-            return None, None
+            return None, None, None
 
-        video_bytes, ext = result
-        logging.info(f"✅ [УСПЕХ] Видео {model} получено: {len(video_bytes)} байт")
-        return video_bytes, ext
+        video_bytes, ext, video_url = result
+
+        logging.info(f"✅ [УСПЕХ] Видео {model} получено. URL: {video_url}")
+        return video_bytes, ext, video_url
 
     except asyncio.TimeoutError:
         logging.error(f"⌛ [TIMEOUT] Глобальный таймаут генерации видео.")
-        return None, "timeout"
+        return None, "timeout", None
     except Exception as e:
         logging.error(f"❌ [VIDEO ERROR]: {traceback.format_exc()}")
-        return None, None
+        return None, None, None

@@ -77,8 +77,12 @@ async def main():
     dp.startup.register(on_startup)
 
     # 4. Настройка сессии бота с защитой от таймаутов и повторами
+    connector = aiohttp.TCPConnector(ssl=False)
+
     timeout = ClientTimeout(total=90, connect=20, sock_read=20, sock_connect=20)
-    session = AiohttpSession(timeout=timeout)
+
+    # Создаем сессию с нашим коннектором
+    session = AiohttpSession(timeout=timeout, connector=connector)
     session.middleware(retry_middleware)
     bot.session = session
 

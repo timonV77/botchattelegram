@@ -13,10 +13,8 @@ COSTS = {
     "kling_10": 10
 }
 
-
 def cost_for(model: str) -> int:
     return COSTS.get(model, 1)
-
 
 async def has_balance(user_id: int, model_or_cost) -> bool:
     try:
@@ -31,7 +29,6 @@ async def has_balance(user_id: int, model_or_cost) -> bool:
         logging.error(f"❌ Ошибка has_balance (User {user_id}): {e}")
         return False
 
-
 async def charge(user_id: int, model_or_cost):
     try:
         if isinstance(model_or_cost, str):
@@ -43,21 +40,19 @@ async def charge(user_id: int, model_or_cost):
     except Exception as e:
         logging.error(f"⚠️ Ошибка списания (User {user_id}): {e}")
 
-
 # ================================
 # 🔥 ГЕНЕРАЦИЯ ФОТО
 # ================================
-async def generate(image_urls: List[str], prompt: str, model: str) -> Tuple[
-    Optional[bytes], Optional[str], Optional[str]]:
+async def generate(image_urls: List[str], prompt: str, model: str) -> Tuple[Optional[bytes], Optional[str], Optional[str]]:
     """Генерация изображений. Возвращает (байты, расширение, прямая_ссылка)."""
     try:
         logging.info(f"--- 🛠 Запуск генерации фото: {model} ---")
 
-        # Получаем 3 значения из network.py
         result = await process_with_polza(prompt, model, image_urls)
 
-        if not result or len(result) < 3:
-            logging.warning(f"⚠️ [API] {model} вернул неполный результат.")
+        # Проверка: если результат пустой или нет ссылки (третий элемент в кортеже)
+        if not result or len(result) < 3 or result[2] is None:
+            logging.warning(f"⚠️ [API] {model} вернул ошибку, статус FAILED или пустой URL.")
             return None, None, None
 
         img_bytes, ext, result_url = result
@@ -69,21 +64,19 @@ async def generate(image_urls: List[str], prompt: str, model: str) -> Tuple[
         logging.error(f"❌ [GENERATE ERROR]: {e}")
         return None, None, None
 
-
 # ================================
 # 🔥 ГЕНЕРАЦИЯ ВИДЕО
 # ================================
-async def generate_video(image_url: str, prompt: str, model: str = "kling_5") -> Tuple[
-    Optional[bytes], Optional[str], Optional[str]]:
+async def generate_video(image_url: str, prompt: str, model: str = "kling_5") -> Tuple[Optional[bytes], Optional[str], Optional[str]]:
     """Генерация видео. Возвращает (байты, расширение, прямая_ссылка)."""
     try:
         logging.info(f"--- 🎬 Запуск видео: {model} ---")
 
-        # Получаем 3 значения из network.py
         result = await process_video_polza(prompt, model, image_url)
 
-        if not result or len(result) < 3:
-            logging.warning(f"⚠️ [API] Видео модель {model} не смогла создать файл.")
+        # Проверка: если результат пустой или нет ссылки
+        if not result or len(result) < 3 or result[2] is None:
+            logging.warning(f"⚠️ [API] Видео модель {model} не смогла создать файл (FAILED).")
             return None, None, None
 
         video_bytes, ext, video_url = result

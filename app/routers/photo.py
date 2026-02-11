@@ -36,59 +36,53 @@ async def background_photo_gen(
         model: str,
         user_id: int
 ):
-    try:
-        logging.info(f"🚀 [TASK START] Запуск генерации для юзера {user_id}")
+    # Создаем локальный экземпляр бота специально для этой задачи
+    # Это гарантирует, что у него будет своя сессия, которая не закроется вебхуком
+    from aiogram.client.default import DefaultBotProperties
+    from aiogram.enums import ParseMode
 
-        # 1️⃣ Получаем URL фотографий
+    local_bot = Bot(
+        token=global_bot.token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+    )
+
+    try:
+        logging.info(f"🚀 [TASK START] Юзер {user_id}")
+
+        # 1. Получаем ссылки
         photo_urls = []
         for p_id in photo_ids:
-            try:
-                url = await get_telegram_photo_url(global_bot, p_id)
-                photo_urls.append(url)
-            except Exception as e:
-                logging.error(f"❌ Ошибка получения URL фото {p_id}: {e}")
+            url = await get_telegram_photo_url(global_bot, p_id)
+            if url: photo_urls.append(url)
 
-        if not photo_urls:
-            await global_bot.send_message(chat_id, "❌ Не удалось загрузить ваши фото.")
-            return
-
-        # 2️⃣ Генерация (вызов API)
+        # 2. Генерация
         img_bytes, ext = await generate(photo_urls, prompt, model)
-
-        if not img_bytes or len(img_bytes) < 1000:
-            logging.error(f"❌ [TASK] API вернуло пустой результат или ошибку")
-            await global_bot.send_message(chat_id, "❌ Нейросеть не смогла обработать запрос.")
+        if not img_bytes:
+            await local_bot.send_message(chat_id, "❌ Ошибка генерации.")
             return
 
-        logging.info(f"✅ [TASK] Файл готов ({len(img_bytes)} байт). Начинаю отправку...")
+        # 3. ОТПРАВКА
+        logging.info(f"📤 [TASK] Пробую отправить через локальный коннектор...")
+        file = BufferedInputFile(img_bytes, filename=f"res_{user_id}.{ext or 'jpg'}")
 
-        # 3️⃣ Отправка в Telegram через глобальный бот
-        file = BufferedInputFile(img_bytes, filename=f"result.{ext or 'jpg'}")
+        # Используем local_bot вместо global_bot
+        await local_bot.send_photo(
+            chat_id=chat_id,
+            photo=file,
+            caption="✨ Ваше изображение готово!",
+            reply_markup=main_kb(),
+            request_timeout=300
+        )
 
-        try:
-            await global_bot.send_photo(
-                chat_id=chat_id,
-                photo=file,
-                caption="✨ Ваше изображение готово!",
-                reply_markup=main_kb(),
-                request_timeout=300  # Даем 5 минут на загрузку тяжелого файла
-            )
-            logging.info(f"✅ [TASK SUCCESS] Фото доставлено юзеру {user_id}")
+        logging.info(f"✅ [TASK SUCCESS] Фото улетело юзеру {user_id}!")
+        await charge(user_id, model)
 
-            # 4️⃣ Списание баланса только после подтверждения доставки
-            await charge(user_id, model)
-            logging.info(f"💰 [TASK] Баланс успешно списан")
-
-        except Exception as send_error:
-            logging.error(f"❌ [TASK] Ошибка при отправке send_photo: {send_error}")
-            await global_bot.send_message(chat_id, "❌ Ошибка при передаче фото. Попробуйте еще раз.")
-
-    except Exception:
-        logging.error(f"❌ [TASK CRITICAL] Ошибка:\n{traceback.format_exc()}")
-        try:
-            await global_bot.send_message(chat_id, "❌ Произошла ошибка. Мы уже чиним её!")
-        except:
-            pass
+    except Exception as e:
+        logging.error(f"❌ [TASK FAILED] Ошибка: {e}")
+    finally:
+        # Важно закрыть сессию локального бота
+        await local_bot.session.close()
+        logging.info(f"🧹 Сессия локального бота закрыта")
 
 # ================================
 # ХЕНДЛЕРЫ

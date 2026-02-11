@@ -19,13 +19,12 @@ MODELS_MAP = {
     "kling_10": "kling2.5-image-to-video"
 }
 
-ssl_context = ssl.create_default_context()
-ssl_context.check_hostname = False
-ssl_context.verify_mode = ssl.CERT_NONE
 
 async def _download_content_bytes(url: str) -> Tuple[Optional[bytes], Optional[str]]:
-    connector = aiohttp.TCPConnector(ssl=ssl_context)
+    # Отключаем проверку SSL напрямую в коннекторе
+    connector = aiohttp.TCPConnector(ssl=False)
     timeout = aiohttp.ClientTimeout(total=300)
+
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
         for attempt in range(5):
             try:
@@ -34,11 +33,17 @@ async def _download_content_bytes(url: str) -> Tuple[Optional[bytes], Optional[s
                         data = await response.read()
                         content_type = response.headers.get("Content-Type", "").lower()
                         ext = "mp4" if "video" in content_type or "mp4" in url.lower() else "jpg"
+
+                        # Небольшая пауза перед закрытием сессии помогает избежать ClientOSError
+                        await asyncio.sleep(0.1)
                         return data, ext
+
+                    logging.warning(f"⚠️ Статус скачивания {response.status}, попытка {attempt + 1}")
                     await asyncio.sleep(3)
             except Exception as e:
-                logging.error(f"⚠️ Ошибка скачивания: {e}")
+                logging.error(f"⚠️ Ошибка скачивания (попытка {attempt + 1}): {e}")
                 await asyncio.sleep(5)
+
     return None, None
 
 

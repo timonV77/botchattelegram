@@ -38,8 +38,8 @@ async def show_users_count(message: types.Message):
         count = await db.get_users_count()
 
         await message.answer(
-            f"📊 **Статистика бота**\n\n"
-            f"👥 Всего пользователей: **{count}**"
+            f"📊 Статистика бота\n\n"
+            f"👥 Всего пользователей: {count}"
         )
         logging.info(f"📊 Юзер {message.from_user.id} запросил статистику: {count} чел.")
     except Exception as e:

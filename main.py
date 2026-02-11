@@ -14,7 +14,7 @@ from app.bot import dp, bot
 from app.routers import setup_routers
 from app.routers.payments import prodamus_webhook
 import database as db
-from app.routers.album_middleware import AlbumMiddleware  # Middleware для сбора фото
+from app.routers.album_middleware import AlbumMiddleware
 
 # --- КОНФИГУРАЦИЯ ---
 TOKEN = os.getenv("BOT_TOKEN")
@@ -35,8 +35,8 @@ async def retry_middleware(handler, bot, method):
             return await handler(bot, method)
         except TelegramNetworkError as e:
             if attempt == 2: raise e
-            logging.warning(f"⚠️ Сетевая ошибка, попытка {attempt + 1}/3...")
-            await asyncio.sleep(1)
+            logging.warning(f"⚠️ Сетевая ошибка Telegram, попытка {attempt + 1}/3...")
+            await asyncio.sleep(1.5)  # Немного увеличили паузу между попытками
     return await handler(bot, method)
 
 
@@ -66,24 +66,19 @@ async def main():
     await db.init_db()
 
     # 2. РЕГИСТРАЦИЯ MIDDLEWARE
-    # Это должно быть ДО подключения роутеров.
-    # latency=0.6 — это время ожидания (в секундах) всех частей альбома.
     dp.message.middleware(AlbumMiddleware(latency=0.6))
     logging.info("✅ AlbumMiddleware зарегистрирован")
 
     # 3. Подключение роутеров
     setup_routers(dp)
-
-    # Регистрация функции старта
     dp.startup.register(on_startup)
 
-    # 4. Настройка сессии бота
-    timeout = ClientTimeout(total=90, connect=20, sock_read=20, sock_connect=20)
-
-    # Создаем сессию в обычном режиме
+    # 4. Настройка сессии бота (Исправлено для тяжелых файлов и SSL)
+    # Увеличиваем sock_read до 300 (5 минут), чтобы файлы успевали прогружаться
+    timeout = ClientTimeout(total=300, connect=30, sock_read=300, sock_connect=30)
     session = AiohttpSession(timeout=timeout)
 
-    # Прямая подмена коннектора для обхода SSL ошибок (убирает TypeError)
+    # Прямая подмена коннектора для игнорирования проблемных SSL сертификатов
     session._connector = aiohttp.TCPConnector(ssl=False)
 
     session.middleware(retry_middleware)
@@ -95,18 +90,20 @@ async def main():
     # Маршрут для платежей Prodamus
     app.router.add_post("/payments/prodamus", prodamus_webhook)
 
-    # Обработчик входящих вебхуков от Telegram
+    # ОБРАБОТЧИК ВЕБХУКОВ (Критическое изменение!)
+    # reply_into_webhook=False заставляет бота слать фото ОТДЕЛЬНЫМ запросом.
+    # Это решает проблему 'Connection lost' после долгой генерации.
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
-        handle_as_tasks=True
+        handle_as_tasks=True,
+        reply_into_webhook=False
     )
     webhook_requests_handler.register(app, path=WEBHOOK_PATH)
 
-    # Связываем приложение с диспетчером
     setup_application(app, dp, bot=bot)
 
-    # 6. Настройка SSL контекста для HTTPS
+    # 6. Настройка SSL контекста для HTTPS сервера (входящие от Telegram)
     context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
     context.load_cert_chain(WEBHOOK_SSL_CERT, WEBHOOK_SSL_PRIV)
 
@@ -118,13 +115,13 @@ async def main():
     try:
         await site.start()
         logging.info(f"📡 Сервер активен на порту: {WEBHOOK_PORT}")
-        # Бесконечный цикл ожидания
         await asyncio.Event().wait()
     except Exception as e:
         logging.error(f"❌ Критическая ошибка сервера: {e}")
     finally:
         # Корректное завершение
-        await bot.session.close()
+        if bot.session:
+            await bot.session.close()
         await runner.cleanup()
         await db.close_db()
         logging.info("🛑 Бот остановлен")

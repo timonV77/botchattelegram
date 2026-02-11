@@ -3,7 +3,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 # --- Выбор модели генерации изображения ---
 def model_inline() -> InlineKeyboardMarkup:
     """
-    Клавиатура выбора модели ИИ для генерации фото.
+    Клавиатура выбора модели ИИ для генерации фото и видео.
     """
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -24,6 +24,13 @@ def model_inline() -> InlineKeyboardMarkup:
                 callback_data="model_seedream"
             )
         ],
+        # 🔥 ВОТ ЭТА КНОПКА БЫЛА ПРОПУЩЕНА
+        [
+            InlineKeyboardButton(
+                text="🎬 Оживить фото (5 сек) — 5 ⚡",
+                callback_data="model_kling_5"
+            )
+        ],
         [
             InlineKeyboardButton(
                 text="❌ Отмена",
@@ -32,7 +39,7 @@ def model_inline() -> InlineKeyboardMarkup:
         ]
     ])
 
-# --- Кнопки пополнения баланса (оставляем без изменений) ---
+# --- Кнопки пополнения баланса ---
 def buy_inline() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="10 ген. — 149₽", callback_data="pay_10_149")],

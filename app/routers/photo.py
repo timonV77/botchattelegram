@@ -180,3 +180,18 @@ async def on_prompt(message: types.Message, state: FSMContext):
 
     await message.answer("⏳ Магия началась! Видео/фото придет в этот чат через 1-3 минуты.", reply_markup=main_kb())
     await state.clear()
+
+    @router.message(Command("users"))
+    async def show_users_count(message: types.Message):
+        try:
+            # Вызываем твою функцию из database.py
+            count = await db.get_users_count()
+
+            await message.answer(
+                f"📊 **Статистика бота**\n\n"
+                f"👥 Всего пользователей: **{count}**"
+            )
+            logging.info(f"📊 Юзер {message.from_user.id} запросил статистику: {count} чел.")
+        except Exception as e:
+            logging.error(f"❌ Ошибка при выполнении команды /users: {e}")
+            await message.answer("⚠️ Не удалось получить статистику.")

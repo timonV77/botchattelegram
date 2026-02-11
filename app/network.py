@@ -2,8 +2,7 @@ import os
 import aiohttp
 import asyncio
 import logging
-import ssl
-from typing import Tuple, Optional, List # Добавили List
+from typing import Tuple, Optional, List
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -19,119 +18,124 @@ MODELS_MAP = {
     "kling_10": "kling2.5-image-to-video"
 }
 
+timeout = aiohttp.ClientTimeout(total=600)
+
 
 async def _download_content_bytes(url: str) -> Tuple[Optional[bytes], Optional[str]]:
-    # Отключаем проверку SSL напрямую в коннекторе
-    connector = aiohttp.TCPConnector(ssl=False)
-    timeout = aiohttp.ClientTimeout(total=300)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        try:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    logging.error(f"❌ Ошибка скачивания: {response.status}")
+                    return None, None
 
-    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-        for attempt in range(5):
-            try:
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        data = await response.read()
-                        content_type = response.headers.get("Content-Type", "").lower()
-                        ext = "mp4" if "video" in content_type or "mp4" in url.lower() else "jpg"
+                data = await response.read()
+                content_type = response.headers.get("Content-Type", "").lower()
+                ext = "mp4" if "video" in content_type else "jpg"
 
-                        # Небольшая пауза перед закрытием сессии помогает избежать ClientOSError
-                        await asyncio.sleep(0.1)
-                        return data, ext
+                return data, ext
 
-                    logging.warning(f"⚠️ Статус скачивания {response.status}, попытка {attempt + 1}")
-                    await asyncio.sleep(3)
-            except Exception as e:
-                logging.error(f"⚠️ Ошибка скачивания (попытка {attempt + 1}): {e}")
-                await asyncio.sleep(5)
+        except Exception as e:
+            logging.error(f"❌ Ошибка загрузки файла: {e}")
+            return None, None
 
-    return None, None
 
+# ================= IMAGE =================
 
 async def process_with_polza(prompt: str, model_type: str, image_urls: List[str] = None):
-    """Генерация ИЗОБРАЖЕНИЯ через Polza AI с защитой от SSL ошибок."""
+
     if not POLZA_API_KEY:
         logging.error("❌ POLZA_API_KEY не установлен")
         return None, None
 
     model_id = MODELS_MAP.get(model_type)
+
     headers = {
         "Authorization": f"Bearer {POLZA_API_KEY}",
         "Content-Type": "application/json"
     }
 
-    # Тело запроса строго по документации
     payload = {
         "model": model_id,
         "prompt": prompt.strip(),
         "aspect_ratio": "1:1",
-        "resolution": "1K",
-        "safetySettings": [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
-        ]
+        "resolution": "1K"
     }
 
     if image_urls:
         payload["filesUrl"] = image_urls
 
-    # Вставляем исправленный коннектор здесь
-    connector = aiohttp.TCPConnector(ssl=False)
-
-    async with aiohttp.ClientSession(connector=connector) as session:
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         try:
-            logging.info(f"📤 Отправка запроса. Модель: {model_id}, Фото: {len(image_urls) if image_urls else 0}")
+            logging.info(f"📤 Polza запрос. Модель: {model_id}")
 
-            async with session.post(f"{BASE_URL}/images/generations", headers=headers, json=payload) as response:
-                # Читаем ответ, не закрывая соединение слишком быстро
-                data = await response.json()
+            async with session.post(
+                    f"{BASE_URL}/images/generations",
+                    headers=headers,
+                    json=payload
+            ) as response:
+
+                text = await response.text()
 
                 if response.status not in (200, 201):
-                    logging.error(f"❌ Ошибка API ({response.status}): {data}")
+                    logging.error(f"❌ API ошибка {response.status}: {text}")
                     return None, None
 
+                data = await response.json()
                 request_id = data.get("requestId")
+
                 if not request_id:
-                    logging.error(f"❌ requestId не получен: {data}")
+                    logging.error(f"❌ Нет requestId: {data}")
                     return None, None
 
-            # Опрос статуса
-            for attempt in range(60):
+            # Polling
+            for _ in range(60):
                 await asyncio.sleep(7)
-                async with session.get(f"{BASE_URL}/images/{request_id}", headers=headers) as resp:
+
+                async with session.get(
+                        f"{BASE_URL}/images/{request_id}",
+                        headers=headers
+                ) as resp:
+
                     if resp.status != 200:
                         continue
 
                     result = await resp.json()
                     status = result.get("status", "").lower()
 
-                    if status == "success" or result.get("url"):
-                        url = result.get("url") or (result.get("images")[0] if result.get("images") else None)
+                    if status == "success":
+                        url = result.get("url") or (
+                            result.get("images")[0] if result.get("images") else None
+                        )
+
                         if url:
-                            # Небольшая пауза перед финальным действием для стабильности SSL
-                            await asyncio.sleep(0.1)
+                            logging.info("✅ Polza вернула URL")
                             return await _download_content_bytes(url)
 
                     if status in ("failed", "error"):
-                        # Детальное логирование причины провала (важно для фильтров)
-                        logging.error(f"❌ Генерация отклонена. Ответ сервера: {result}")
+                        logging.error(f"❌ Генерация провалена: {result}")
                         break
 
         except Exception as e:
-            logging.error(f"❌ Сетевая ошибка в process_with_polza: {e}")
+            logging.error(f"❌ Сетевая ошибка Polza: {e}")
 
     return None, None
-async def process_video_polza(prompt: str, model_type: str, image_url: str = None):
-    """
-    Генерация ВИДЕО.
-    Примечание: Kling обычно принимает только ОДНО фото как референс.
-    """
-    if not POLZA_API_KEY: return None, None
 
-    model_id = MODELS_MAP.get(model_type, "kling2.5-image-to-video")
-    headers = {"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"}
+
+# ================= VIDEO =================
+
+async def process_video_polza(prompt: str, model_type: str, image_url: str = None):
+
+    if not POLZA_API_KEY:
+        return None, None
+
+    model_id = MODELS_MAP.get(model_type)
     duration = 10 if model_type == "kling_10" else 5
+
+    headers = {
+        "Authorization": f"Bearer {POLZA_API_KEY}",
+        "Content-Type": "application/json"
+    }
 
     payload = {
         "model": model_id,
@@ -141,24 +145,47 @@ async def process_video_polza(prompt: str, model_type: str, image_url: str = Non
     }
 
     if image_url:
-        payload["imageUrls"] = [image_url] # Kling требует массив, даже если фото одно
+        payload["imageUrls"] = [image_url]
 
-    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         try:
-            async with session.post(f"{BASE_URL}/videos/generations", headers=headers, json=payload) as response:
+            async with session.post(
+                    f"{BASE_URL}/videos/generations",
+                    headers=headers,
+                    json=payload
+            ) as response:
+
                 data = await response.json()
                 request_id = data.get("requestId")
-                if not request_id: return None, None
 
-            for attempt in range(180):
+                if not request_id:
+                    logging.error("❌ Нет requestId для видео")
+                    return None, None
+
+            for _ in range(180):
                 await asyncio.sleep(10)
-                async with session.get(f"{BASE_URL}/videos/{request_id}", headers=headers) as resp:
-                    if resp.status != 200: continue
+
+                async with session.get(
+                        f"{BASE_URL}/videos/{request_id}",
+                        headers=headers
+                ) as resp:
+
+                    if resp.status != 200:
+                        continue
+
                     result = await resp.json()
                     status = result.get("status", "").lower()
-                    if status == "success" or result.get("url"):
-                        return await _download_content_bytes(result.get("url") or result.get("videoUrl"))
-                    if status in ("failed", "error"): break
+
+                    if status == "success":
+                        url = result.get("url") or result.get("videoUrl")
+                        if url:
+                            return await _download_content_bytes(url)
+
+                    if status in ("failed", "error"):
+                        logging.error(f"❌ Видео провалено: {result}")
+                        break
+
         except Exception as e:
-            logging.error(f"❌ Ошибка видео: {e}")
+            logging.error(f"❌ Ошибка генерации видео: {e}")
+
     return None, None

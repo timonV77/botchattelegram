@@ -18,6 +18,8 @@ import database as db
 # ВАЖНО: Используем глобальный объект бота для фоновых задач
 from app.bot import bot as global_bot
 
+
+active_tasks = set()
 router = Router()
 
 MODEL_NAMES = {
@@ -135,6 +137,7 @@ async def on_model(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer("✍️ Что изменить на фото?", reply_markup=cancel_kb())
     await state.set_state(PhotoProcess.waiting_for_prompt)
 
+
 @router.message(PhotoProcess.waiting_for_prompt)
 async def on_prompt(message: types.Message, state: FSMContext):
     if not message.text:
@@ -149,16 +152,18 @@ async def on_prompt(message: types.Message, state: FSMContext):
         await state.clear()
         return await message.answer("❌ Недостаточно средств.", reply_markup=main_kb())
 
-    # 🔥 Запуск фоновой задачи
-    asyncio.create_task(
+    # 🔥 СОЗДАЕМ ЗАДАЧУ
+    task = asyncio.create_task(
         background_photo_gen(message.chat.id, photo_ids, message.text, model, user_id)
     )
 
-    # Оповещаем пользователя, оставляя кнопку ОТМЕНИТЬ
+    # ❗️ ВАЖНО: Добавляем в глобальный список, чтобы Python не "забыл" про неё
+    active_tasks.add(task)
+    # Удаляем из списка, когда задача завершится
+    task.add_done_callback(active_tasks.discard)
+
     await message.answer(
-        "⏳ Генерация запущена! Это займет 1-3 минуты.\nВы можете подождать или отменить ожидание.",
+        "⏳ Генерация запущена! Это займет 1-3 минуты.",
         reply_markup=cancel_kb()
     )
-    # Очищаем состояние, чтобы юзер мог делать другие действия,
-    # но фото прилетит в этот чат позже.
     await state.clear()

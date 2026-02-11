@@ -48,8 +48,9 @@ async def _download_content_bytes(url: str) -> Tuple[Optional[bytes], Optional[s
 
 
 async def process_with_polza(prompt: str, model_type: str, image_urls: List[str] = None):
-    """Генерация ИЗОБРАЖЕНИЯ строго по справочнику Polza AI."""
+    """Генерация ИЗОБРАЖЕНИЯ через Polza AI с защитой от SSL ошибок."""
     if not POLZA_API_KEY:
+        logging.error("❌ POLZA_API_KEY не установлен")
         return None, None
 
     model_id = MODELS_MAP.get(model_type)
@@ -62,28 +63,30 @@ async def process_with_polza(prompt: str, model_type: str, image_urls: List[str]
     payload = {
         "model": model_id,
         "prompt": prompt.strip(),
-        "aspect_ratio": "1:1",  # Обязательный параметр
-        "resolution": "1K",  # Значение по умолчанию
+        "aspect_ratio": "1:1",
+        "resolution": "1K",
         "safetySettings": [
-        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
-    ]
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+        ]
     }
 
-    # Поля filesUrl принимает массив строк (макс 14)
     if image_urls:
         payload["filesUrl"] = image_urls
 
-    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
+    # Вставляем исправленный коннектор здесь
+    connector = aiohttp.TCPConnector(ssl=False)
+
+    async with aiohttp.ClientSession(connector=connector) as session:
         try:
             logging.info(f"📤 Отправка запроса. Модель: {model_id}, Фото: {len(image_urls) if image_urls else 0}")
 
             async with session.post(f"{BASE_URL}/images/generations", headers=headers, json=payload) as response:
+                # Читаем ответ, не закрывая соединение слишком быстро
                 data = await response.json()
 
-                # Код 201 означает, что задача принята
                 if response.status not in (200, 201):
                     logging.error(f"❌ Ошибка API ({response.status}): {data}")
                     return None, None
@@ -94,7 +97,7 @@ async def process_with_polza(prompt: str, model_type: str, image_urls: List[str]
                     return None, None
 
             # Опрос статуса
-            for _ in range(60):
+            for attempt in range(60):
                 await asyncio.sleep(7)
                 async with session.get(f"{BASE_URL}/images/{request_id}", headers=headers) as resp:
                     if resp.status != 200:
@@ -104,20 +107,21 @@ async def process_with_polza(prompt: str, model_type: str, image_urls: List[str]
                     status = result.get("status", "").lower()
 
                     if status == "success" or result.get("url"):
-                        # Ищем ссылку в url или в массиве images
                         url = result.get("url") or (result.get("images")[0] if result.get("images") else None)
                         if url:
+                            # Небольшая пауза перед финальным действием для стабильности SSL
+                            await asyncio.sleep(0.1)
                             return await _download_content_bytes(url)
 
                     if status in ("failed", "error"):
-                        logging.error(f"❌ Генерация отклонена: {result}")
+                        # Детальное логирование причины провала (важно для фильтров)
+                        logging.error(f"❌ Генерация отклонена. Ответ сервера: {result}")
                         break
 
         except Exception as e:
-            logging.error(f"❌ Сетевая ошибка: {e}")
+            logging.error(f"❌ Сетевая ошибка в process_with_polza: {e}")
 
     return None, None
-
 async def process_video_polza(prompt: str, model_type: str, image_url: str = None):
     """
     Генерация ВИДЕО.

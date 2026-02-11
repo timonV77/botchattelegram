@@ -127,17 +127,17 @@ async def start_photo(message: types.Message, state: FSMContext):
     await state.set_state(PhotoProcess.waiting_for_photo)
 
 
-# --- 2. ОЖИВИТЬ ФОТО (Прямой вход из главного меню) ---
+# --- 2. ОЖИВИТЬ ФОТО (Вход из главного меню) ---
 @router.message(F.text == "🎬 Оживить фото")
 async def start_animation(message: types.Message, state: FSMContext):
     balance = await db.get_balance(message.from_user.id)
-    # Оживление обычно дороже, проверим на 5 молний (или измени на 1)
+    # Проверяем минимальный баланс для видео (5 молний)
     if balance < 5:
         return await message.answer("❌ Для оживления нужно минимум 5 ⚡", reply_markup=main_kb())
 
     await state.clear()
-    # Сразу фиксируем модель, чтобы не спрашивать через инлайн-кнопки
-    await state.update_data(chosen_model="kling_5")
+    # Помечаем, что мы зашли через режим видео, но модель пока НЕ фиксируем
+    await state.update_data(is_video_mode=True)
 
     await message.answer(
         "🎬 Режим оживления! Пришлите **одно** фото, которое хотите превратить в видео:",
@@ -154,20 +154,20 @@ async def on_photo(message: types.Message, state: FSMContext, album: Optional[Li
 
     await state.update_data(photo_ids=photo_ids)
 
-    # Если модель УЖЕ выбрана (через кнопку Оживить), сразу просим промпт
-    if data.get("chosen_model"):
+    # Если мы в режиме видео, предлагаем выбор длительности (5 или 10 сек)
+    if data.get("is_video_mode"):
         await message.answer(
-            "✍️ Опишите движение на видео (или просто '.', если стандартное):",
-            reply_markup=cancel_kb()
+            "⏱ Выберите длительность видео:",
+            reply_markup=kling_inline() # Та самая клавиатура с выбором 5 и 10 сек
         )
-        await state.set_state(PhotoProcess.waiting_for_prompt)
+        await state.set_state(PhotoProcess.waiting_for_model)
     else:
-        # Если модель не выбрана (обычная фотосессия), просим выбрать нейросеть
+        # Если обычная фотосессия, просим выбрать обычную нейросеть
         await message.answer("🤖 Выберите нейросеть:", reply_markup=model_inline())
         await state.set_state(PhotoProcess.waiting_for_model)
 
 
-# --- 4. ВЫБОР МОДЕЛИ (через Inline) ---
+# --- 4. ВЫБОР МОДЕЛИ (И для фото, и для видео) ---
 @router.callback_query(F.data.startswith("model_"))
 async def on_model(callback: types.CallbackQuery, state: FSMContext):
     model_key = callback.data.replace("model_", "")
@@ -175,10 +175,12 @@ async def on_model(callback: types.CallbackQuery, state: FSMContext):
 
     await callback.message.edit_text(f"🎯 Выбрана модель: {MODEL_NAMES.get(model_key, model_key)}")
 
+    # Оставляем клавиатуру cancel_kb(), чтобы была кнопка "Отменить"
     if "kling" in model_key.lower():
         await callback.message.answer(
-            "✍️ Опишите, что должно происходить на видео (или '.', если стандартное):",
-            reply_markup=cancel_kb())
+            "✍️ Опишите движение на видео (или просто '.', если стандартное):",
+            reply_markup=cancel_kb()
+        )
     else:
         await callback.message.answer("✍️ Что изменить на фото?", reply_markup=cancel_kb())
 
@@ -193,16 +195,21 @@ async def on_prompt(message: types.Message, state: FSMContext):
     photo_ids = data.get("photo_ids", [])
     user_id = message.from_user.id
 
+    # Проверка баланса непосредственно перед запуском
     if not await has_balance(user_id, model):
         await state.clear()
-        return await message.answer("❌ Недостаточно средств.", reply_markup=main_kb())
+        return await message.answer("❌ Недостаточно средств для выбранной модели.", reply_markup=main_kb())
 
-    # Выбираем функцию генерации
+    # Выбор функции
     func = background_video_gen if "kling" in model.lower() else background_photo_gen
 
     task = asyncio.create_task(func(message.chat.id, photo_ids, message.text, model, user_id))
     active_tasks.add(task)
     task.add_done_callback(active_tasks.discard)
 
-    await message.answer("⏳ Магия началась! Это займет пару минут...", reply_markup=main_kb())
+    # Возвращаем главное меню ТОЛЬКО здесь, когда работа ушла в фон
+    await message.answer(
+        "⏳ Магия началась! Видео/фото придет в этот чат через 1-3 минуты.",
+        reply_markup=main_kb()
+    )
     await state.clear()

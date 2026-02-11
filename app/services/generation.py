@@ -1,12 +1,10 @@
 import logging
 import traceback
 import asyncio
-# Импортируем типы для аннотаций
-from typing import Tuple, Optional, Any
+from typing import Tuple, Optional, Any, List # Добавили List
 from app.network import process_with_polza, process_video_polza
 import database as db
 
-# Словарь стоимости моделей
 COSTS = {
     "nanabanana": 1,
     "nanabanana_pro": 5,
@@ -15,20 +13,15 @@ COSTS = {
     "kling_10": 10
 }
 
-
 def cost_for(model: str) -> int:
-    """Возвращает стоимость для модели. Если модель не найдена, цена 1."""
     return COSTS.get(model, 1)
 
-
 async def has_balance(user_id: int, model_or_cost) -> bool:
-    """Проверяет баланс пользователя."""
     try:
         if isinstance(model_or_cost, str):
             cost = cost_for(model_or_cost)
         else:
             cost = int(model_or_cost)
-
         balance = await db.get_balance(user_id)
         logging.info(f"📊 [BALANCE] User {user_id}: {balance}, Cost: {cost}")
         return balance >= cost
@@ -36,32 +29,29 @@ async def has_balance(user_id: int, model_or_cost) -> bool:
         logging.error(f"❌ Ошибка has_balance (User {user_id}): {e}")
         return False
 
-
 async def charge(user_id: int, model_or_cost):
-    """Списывает баланс."""
     try:
         if isinstance(model_or_cost, str):
             cost = cost_for(model_or_cost)
         else:
             cost = int(model_or_cost)
-
         await db.update_balance(user_id, -cost)
         logging.info(f"✅ [ОПЛАТА] Списано {cost} ⚡ у {user_id}")
     except Exception as e:
         logging.error(f"⚠️ Ошибка списания (User {user_id}): {e}")
 
-
-async def generate(image_url: str, prompt: str, model: str) -> Tuple[Optional[bytes], Optional[str]]:
-    """Генерация изображений с детальным логом."""
+# Исправлено: теперь принимает List[str], так как в photo.py мы передаем список ссылок
+async def generate(image_urls: List[str], prompt: str, model: str) -> Tuple[Optional[bytes], Optional[str]]:
+    """Генерация изображений с поддержкой списка URL."""
     try:
         logging.info(f"--- 🛠 Запуск генерации фото: {model} ---")
-        logging.info(f"🔗 URL исходника: {image_url}")
+        logging.info(f"🔗 URL исходников: {image_urls}")
 
-        # Ожидаем результат от сетевого модуля
-        result = await process_with_polza(prompt, model, image_url)
+        # Передаем список в network.py
+        result = await process_with_polza(prompt, model, image_urls)
 
         if not result or not result[0]:
-            logging.warning(f"⚠️ [API] {model} вернул пустой результат. Проверьте API KEY или лимиты.")
+            logging.warning(f"⚠️ [API] {model} вернул пустой результат.")
             return None, None
 
         img_bytes, ext = result
@@ -72,16 +62,11 @@ async def generate(image_url: str, prompt: str, model: str) -> Tuple[Optional[by
         logging.error(f"❌ [GENERATE ERROR]: {traceback.format_exc()}")
         return None, None
 
-
 async def generate_video(image_url: str, prompt: str, model: str = "kling_5") -> Tuple[Optional[bytes], Optional[str]]:
-    """Генерация видео с защитой от пустых ответов."""
     try:
         logging.info(f"--- 🎬 Запуск видео: {model} ---")
-
-        # 1. Запрашиваем видео у сетевого модуля
         result = await process_video_polza(prompt, model, image_url)
 
-        # 2. Если результат пустой (ошибка API или таймаут внутри network)
         if not result or not result[0]:
             logging.warning(f"⚠️ [API] Видео модель {model} не смогла создать файл.")
             return None, None

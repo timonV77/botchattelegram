@@ -35,6 +35,12 @@ active_tasks = set()
 # 🔥 ФОНОВАЯ ГЕНЕРАЦИЯ ФОТО
 # ================================
 async def background_photo_gen(chat_id: int, photo_ids: List[str], prompt: str, model: str, user_id: int):
+    # Создаем временную сессию бота для этой задачи
+    from aiogram.client.default import DefaultBotProperties
+    from aiogram.enums import ParseMode
+
+    tmp_bot = Bot(token=global_bot.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+
     try:
         logging.info(f"🚀 [PHOTO TASK] Старт для {user_id}")
 
@@ -45,29 +51,38 @@ async def background_photo_gen(chat_id: int, photo_ids: List[str], prompt: str, 
 
         img_bytes, ext = await generate(photo_urls, prompt, model)
         if not img_bytes:
-            await global_bot.send_message(chat_id, "❌ API не вернуло изображение.")
+            await tmp_bot.send_message(chat_id, "❌ API не вернуло изображение.")
             return
 
-        logging.info(f"✅ [PHOTO TASK] Байты получены ({len(img_bytes)}). Отправка...")
+        logging.info(f"✅ [PHOTO TASK] Байты получены ({len(img_bytes)}). Формирую файл...")
 
-        # Отправляем именно как ФОТО
+        # Пытаемся отправить фото
         photo_file = BufferedInputFile(img_bytes, filename=f"result_{user_id}.jpg")
 
-        await global_bot.send_photo(
-            chat_id=chat_id,
-            photo=photo_file,
-            caption="✨ Ваше изображение готово!",
-            reply_markup=main_kb(),
-            request_timeout=600
-        )
-        logging.info(f"✅ [PHOTO SUCCESS] Отправлено юзеру {user_id}")
-        await charge(user_id, model)
+        logging.info(f"📤 [SENDING] Начинаю передачу в Telegram API...")
+
+        try:
+            # Используем жесткий таймаут и проверку результата
+            res = await tmp_bot.send_photo(
+                chat_id=chat_id,
+                photo=photo_file,
+                caption="✨ Ваше изображение готово!",
+                request_timeout=60
+            )
+            if res:
+                logging.info(f"🎊 [SUCCESS] ФОТО УСПЕШНО ОТПРАВЛЕНО! ID: {res.message_id}")
+                await charge(user_id, model)
+        except Exception as send_e:
+            logging.error(f"⚠️ [SEND ERROR] Ошибка при вызове send_photo: {send_e}")
+            # Если фото не пролезло, пробуем отправить ссылкой (как крайний метод)
+            await tmp_bot.send_message(chat_id, "⚠️ Ошибка при передаче фото. Пробую отправить уведомление...")
 
     except Exception as e:
-        logging.error(f"❌ [PHOTO ERROR]: {e}\n{traceback.format_exc()}")
+        logging.error(f"❌ [CRITICAL] Ошибка в задаче: {e}")
+        logging.error(traceback.format_exc())
     finally:
-        logging.info(f"🧹 [PHOTO TASK END] {user_id}")
-
+        await tmp_bot.session.close()
+        logging.info(f"🧹 [TASK END] Сессия закрыта для {user_id}")
 
 # ================================
 # 🔥 ФОНОВАЯ ГЕНЕРАЦИЯ ВИДЕО (ОЖИВЛЕНИЕ)

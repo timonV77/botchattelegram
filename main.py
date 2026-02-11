@@ -82,10 +82,11 @@ async def main():
 
     timeout = ClientTimeout(total=90, connect=20, sock_read=20, sock_connect=20)
 
-    # Создаем сессию с нашим коннектором
-    session = AiohttpSession(timeout=timeout, connector=connector)
-    session.middleware(retry_middleware)
-    bot.session = session
+    # Исправленный вызов: используем именованный аргумент для коннектора правильно
+    session = AiohttpSession(
+        timeout=timeout,
+        connector=connector
+    )
 
     # 5. Настройка веб-приложения aiohttp
     app = web.Application()

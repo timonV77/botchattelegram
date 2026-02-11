@@ -24,13 +24,6 @@ def model_inline() -> InlineKeyboardMarkup:
                 callback_data="model_seedream"
             )
         ],
-        # 🔥 ВОТ ЭТА КНОПКА БЫЛА ПРОПУЩЕНА
-        [
-            InlineKeyboardButton(
-                text="🎬 Оживить фото (5 сек) — 5 ⚡",
-                callback_data="model_kling_5"
-            )
-        ],
         [
             InlineKeyboardButton(
                 text="❌ Отмена",

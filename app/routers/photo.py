@@ -115,23 +115,59 @@ async def cancel_text(message: types.Message, state: FSMContext):
     await message.answer("Действие отменено.", reply_markup=main_kb())
 
 
+# --- 1. НАЧАЛО ФОТОСЕССИИ (Обычный режим) ---
 @router.message(F.text == "📸 Начать фотосессию")
 async def start_photo(message: types.Message, state: FSMContext):
     balance = await db.get_balance(message.from_user.id)
     if balance < 1:
         return await message.answer("❌ Недостаточно генераций.", reply_markup=main_kb())
+
+    await state.clear()  # Сбрасываем старые данные на всякий случай
     await message.answer("🖼 Пришлите от 1 до 4 фотографий:", reply_markup=cancel_kb())
     await state.set_state(PhotoProcess.waiting_for_photo)
 
 
+# --- 2. ОЖИВИТЬ ФОТО (Прямой вход из главного меню) ---
+@router.message(F.text == "🎬 Оживить фото")
+async def start_animation(message: types.Message, state: FSMContext):
+    balance = await db.get_balance(message.from_user.id)
+    # Оживление обычно дороже, проверим на 5 молний (или измени на 1)
+    if balance < 5:
+        return await message.answer("❌ Для оживления нужно минимум 5 ⚡", reply_markup=main_kb())
+
+    await state.clear()
+    # Сразу фиксируем модель, чтобы не спрашивать через инлайн-кнопки
+    await state.update_data(chosen_model="kling_5")
+
+    await message.answer(
+        "🎬 Режим оживления! Пришлите **одно** фото, которое хотите превратить в видео:",
+        reply_markup=cancel_kb()
+    )
+    await state.set_state(PhotoProcess.waiting_for_photo)
+
+
+# --- 3. ПРИЕМ ФОТО ---
 @router.message(PhotoProcess.waiting_for_photo, F.photo)
 async def on_photo(message: types.Message, state: FSMContext, album: Optional[List[types.Message]] = None):
     photo_ids = [msg.photo[-1].file_id for msg in album[:4]] if album else [message.photo[-1].file_id]
+    data = await state.get_data()
+
     await state.update_data(photo_ids=photo_ids)
-    await message.answer("🤖 Выберите нейросеть:", reply_markup=model_inline())
-    await state.set_state(PhotoProcess.waiting_for_model)
+
+    # Если модель УЖЕ выбрана (через кнопку Оживить), сразу просим промпт
+    if data.get("chosen_model"):
+        await message.answer(
+            "✍️ Опишите движение на видео (или просто '.', если стандартное):",
+            reply_markup=cancel_kb()
+        )
+        await state.set_state(PhotoProcess.waiting_for_prompt)
+    else:
+        # Если модель не выбрана (обычная фотосессия), просим выбрать нейросеть
+        await message.answer("🤖 Выберите нейросеть:", reply_markup=model_inline())
+        await state.set_state(PhotoProcess.waiting_for_model)
 
 
+# --- 4. ВЫБОР МОДЕЛИ (через Inline) ---
 @router.callback_query(F.data.startswith("model_"))
 async def on_model(callback: types.CallbackQuery, state: FSMContext):
     model_key = callback.data.replace("model_", "")
@@ -139,10 +175,9 @@ async def on_model(callback: types.CallbackQuery, state: FSMContext):
 
     await callback.message.edit_text(f"🎯 Выбрана модель: {MODEL_NAMES.get(model_key, model_key)}")
 
-    # Если это видео-модель (оживление), можно сразу запускать или спросить промпт
-    if "kling" in model_key:
+    if "kling" in model_key.lower():
         await callback.message.answer(
-            "✍️ Опишите, что должно происходить на видео (или просто напишите '.', чтобы использовать стандартное оживление):",
+            "✍️ Опишите, что должно происходить на видео (или '.', если стандартное):",
             reply_markup=cancel_kb())
     else:
         await callback.message.answer("✍️ Что изменить на фото?", reply_markup=cancel_kb())
@@ -150,6 +185,7 @@ async def on_model(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(PhotoProcess.waiting_for_prompt)
 
 
+# --- 5. ПРИЕМ ПРОМПТА И ЗАПУСК ---
 @router.message(PhotoProcess.waiting_for_prompt)
 async def on_prompt(message: types.Message, state: FSMContext):
     data = await state.get_data()
@@ -161,8 +197,8 @@ async def on_prompt(message: types.Message, state: FSMContext):
         await state.clear()
         return await message.answer("❌ Недостаточно средств.", reply_markup=main_kb())
 
-    # Выбираем функцию генерации в зависимости от модели
-    func = background_video_gen if "kling" in model else background_photo_gen
+    # Выбираем функцию генерации
+    func = background_video_gen if "kling" in model.lower() else background_photo_gen
 
     task = asyncio.create_task(func(message.chat.id, photo_ids, message.text, model, user_id))
     active_tasks.add(task)

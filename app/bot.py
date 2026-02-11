@@ -16,23 +16,19 @@ WEBHOOK_PORT = 8443
 WEBHOOK_PATH = f"/webhook/{TOKEN}"
 WEBHOOK_URL = f"https://{WEBHOOK_HOST}:{WEBHOOK_PORT}{WEBHOOK_PATH}"
 
-# Пути к сертификатам
 WEBHOOK_SSL_CERT = "/root/botchattelegram/certs/cert.pem"
 WEBHOOK_SSL_PRIV = "/root/botchattelegram/certs/private.key"
 
-# 1. Настройка сессии с расширенными лимитами времени
-# Это поможет "пропихнуть" тяжелые файлы через сеть
-custom_session = AiohttpSession(
-    client_session_props={
-        "timeout": aiohttp.ClientTimeout(total=600, connect=30, sock_read=300)
-    }
-)
+# 1. Настройка сессии
+custom_session = AiohttpSession()
+# Задаем таймаут напрямую в объект api
+custom_session.api.timeout = aiohttp.ClientTimeout(total=600, connect=30, sock_read=300)
 
 # Настройка Redis
 redis = Redis(host='localhost', port=6379)
 storage = RedisStorage(redis=redis)
 
-# 2. Инициализация бота с новой сессией
+# 2. Инициализация бота
 bot = Bot(
     token=TOKEN,
     session=custom_session,
@@ -40,10 +36,9 @@ bot = Bot(
 )
 dp = Dispatcher(storage=storage)
 
-# --- ФУНКЦИИ И ОБРАБОТЧИКИ ---
+# --- ФУНКЦИИ ---
 
 async def on_startup(bot: Bot):
-    # Установка вебхука с сертификатом
     with open(WEBHOOK_SSL_CERT, 'rb') as cert_file:
         await bot.set_webhook(
             url=WEBHOOK_URL,
@@ -54,18 +49,14 @@ async def on_startup(bot: Bot):
 
 def start_webhook():
     dp.startup.register(on_startup)
-
     app = web.Application()
-
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot
     )
     webhook_requests_handler.register(app, path=WEBHOOK_PATH)
-
     setup_application(app, dp, bot=bot)
 
-    # Настройка SSL
     import ssl
     context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
     context.load_cert_chain(WEBHOOK_SSL_CERT, WEBHOOK_SSL_PRIV)

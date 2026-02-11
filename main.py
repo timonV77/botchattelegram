@@ -77,16 +77,17 @@ async def main():
     # Регистрация функции старта
     dp.startup.register(on_startup)
 
-    # 4. Настройка сессии бота с защитой от таймаутов и повторами
-    connector = aiohttp.TCPConnector(ssl=False)
-
+    # 4. Настройка сессии бота
     timeout = ClientTimeout(total=90, connect=20, sock_read=20, sock_connect=20)
 
-    # Исправленный вызов: используем именованный аргумент для коннектора правильно
-    session = AiohttpSession(
-        timeout=timeout,
-        connector=connector
-    )
+    # Создаем сессию в обычном режиме
+    session = AiohttpSession(timeout=timeout)
+
+    # Прямая подмена коннектора для обхода SSL ошибок (убирает TypeError)
+    session._connector = aiohttp.TCPConnector(ssl=False)
+
+    session.middleware(retry_middleware)
+    bot.session = session
 
     # 5. Настройка веб-приложения aiohttp
     app = web.Application()

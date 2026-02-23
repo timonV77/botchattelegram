@@ -45,32 +45,35 @@ async def show_users_count(message: types.Message):
     except Exception as e:
         logging.error(f"❌ Ошибка при выполнении команды /users: {e}")
         await message.answer("⚠️ Не удалось получить статистику.")
-# ================================
-# 🔥 ФОНОВАЯ ГЕНЕРАЦИЯ ФОТО (ЧЕРЕЗ URL)
-# ================================
+
+
 async def background_photo_gen(chat_id: int, photo_ids: List[str], prompt: str, model: str, user_id: int):
     try:
-        logging.info(f"🚀 [PHOTO TASK] Старт через URL для {user_id}")
+        logging.info(f"--- 🛠 Запуск генерации фото: {model} ---")
 
         photo_urls = []
         for p_id in photo_ids:
             url = await get_telegram_photo_url(global_bot, p_id)
-            if url: photo_urls.append(url)
+            if url:
+                photo_urls.append(url)
 
-        # Получаем 3 значения (байты нам не нужны для отправки, берем только URL)
+        # Вызываем генерацию (принимает список URL, промпт и модель)
+        # На выходе: (бинарные_данные, расширение, ссылка_строка)
         _, _, result_url = await generate(photo_urls, prompt, model)
 
         if not result_url:
-            logging.error("❌ Не удалось вытащить URL фото из API")
-            await global_bot.send_message(chat_id, "❌ Ошибка: нейросеть не вернула ссылку на фото.")
+            logging.error("❌ Не удалось вытащить URL фото из API (вернулся None)")
+            await global_bot.send_message(chat_id, "❌ Ошибка: нейросеть не смогла сгенерировать изображение.")
             return
 
-        logging.info(f"📤 [SENDING PHOTO] Отправляю URL: {result_url}")
+        # ИСПРАВЛЕНИЕ: Если вдруг пришел словарь {'url': '...'}, вынимаем строку
+        final_url = result_url.get("url") if isinstance(result_url, dict) else result_url
 
-        # Отправляем СТРОКУ (URL). Твой сервер не грузит файл, Telegram качает сам.
+        logging.info(f"📤 [SENDING PHOTO] Пытаюсь отправить URL: {final_url}")
+
         await global_bot.send_photo(
             chat_id=chat_id,
-            photo=result_url,
+            photo=str(final_url),  # Гарантируем, что это строка
             caption="✨ Ваше изображение готово!",
             reply_markup=main_kb()
         )
@@ -80,7 +83,8 @@ async def background_photo_gen(chat_id: int, photo_ids: List[str], prompt: str, 
 
     except Exception as e:
         logging.error(f"❌ [PHOTO CRITICAL ERROR]: {e}")
-        await global_bot.send_message(chat_id, "⚠️ Ошибка при отправке фото. Проверьте сеть сервера.")
+        logging.error(traceback.format_exc())
+        await global_bot.send_message(chat_id, "⚠️ Ошибка при отправке результата. Попробуйте другой промпт.")
 
 
 # ================================
@@ -88,39 +92,39 @@ async def background_photo_gen(chat_id: int, photo_ids: List[str], prompt: str, 
 # ================================
 async def background_video_gen(chat_id: int, photo_ids: List[str], prompt: str, model: str, user_id: int):
     try:
-        logging.info(f"🎬 [VIDEO TASK] Старт через URL для {user_id}")
+        logging.info(f"🎬 [VIDEO TASK] Старт для {user_id}")
 
         photo_url = await get_telegram_photo_url(global_bot, photo_ids[0])
-        final_prompt = prompt if prompt and prompt.strip() != "" else "Natural movement, high quality"
+        # Для видео часто промпт не должен быть пустым
+        final_prompt = prompt if (prompt and prompt.strip() != ".") else "Cinematic movement, high quality"
 
-        # ВАЖНО: Твоя функция generate_video тоже должна возвращать 3 значения: (bytes, ext, url)
+        # На выходе: (бинарные_данные, расширение, ссылка_строка)
         _, _, video_url = await generate_video(photo_url, final_prompt, model)
 
         if not video_url:
-            logging.error("❌ Не удалось вытащить URL видео из API")
-            await global_bot.send_message(chat_id, "❌ Не удалось получить ссылку на видео.")
+            logging.error("❌ Не удалось получить ссылку на видео")
+            await global_bot.send_message(chat_id, "❌ Ошибка генерации видео.")
             return
 
-        logging.info(f"📤 [SENDING VIDEO] Отправляю URL: {video_url}")
+        # ИСПРАВЛЕНИЕ: Извлечение строки из словаря
+        final_v_url = video_url.get("url") if isinstance(video_url, dict) else video_url
 
-        # Отправляем видео ССЫЛКОЙ
+        logging.info(f"📤 [SENDING VIDEO] URL: {final_v_url}")
+
         await global_bot.send_video(
             chat_id=chat_id,
-            video=video_url,
+            video=str(final_v_url),
             caption="✅ Ваше видео готово!",
             reply_markup=main_kb()
         )
 
         await charge(user_id, model)
-        logging.info(f"✅ [VIDEO SUCCESS] Видео отправлено юзеру {user_id}")
+        logging.info(f"✅ [VIDEO SUCCESS] Видео отправлено {user_id}")
 
     except Exception as e:
-        logging.error(f"❌ [VIDEO ERROR]: {e}\n{traceback.format_exc()}")
-        await global_bot.send_message(chat_id, "⚠️ Ошибка при генерации видео.")
-    finally:
-        logging.info(f"🧹 [VIDEO TASK END] {user_id}")
-
-
+        logging.error(f"❌ [VIDEO ERROR]: {e}")
+        logging.error(traceback.format_exc())
+        await global_bot.send_message(chat_id, "⚠️ Ошибка при создании видео.")
 # ================================
 # ХЕНДЛЕРЫ
 # ================================

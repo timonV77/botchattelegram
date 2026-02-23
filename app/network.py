@@ -52,6 +52,30 @@ async def _download_content_bytes(session: aiohttp.ClientSession, url: str) -> T
         return None, None, str(url)
 
 
+async def upload_to_telegraph(image_bytes: bytes) -> Optional[str]:
+    """
+    Загружает изображение на Telegraph и возвращает прямую ссылку.
+    """
+    try:
+        form = aiohttp.FormData()
+        form.add_field('file', image_bytes, filename='file.jpg', content_type='image/jpeg')
+
+        async with aiohttp.ClientSession() as session:
+            # Официальный эндпоинт загрузки Telegraph
+            async with session.post('https://telegra.ph/upload', data=form) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if isinstance(data, list) and len(data) > 0:
+                        path = data[0].get('src')
+                        full_url = f"https://telegra.ph{path}"
+                        logging.info(f"✅ Фото успешно перезалито на Telegraph: {full_url}")
+                        return full_url
+
+                logging.error(f"❌ Ошибка загрузки на Telegraph: {resp.status}")
+    except Exception as e:
+        logging.error(f"❌ Критическая ошибка Telegraph: {e}")
+
+    return None
 # ================= IMAGE GENERATION =================
 
 async def process_with_polza(prompt: str, model_type: str, image_urls: List[str] = None) -> Tuple[

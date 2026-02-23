@@ -14,7 +14,7 @@ BASE_URL = "https://polza.ai/api/v1"
 MODELS_MAP = {
     "nanabanana": "gemini-2.5-flash-image",
     "nanabanana_pro": "gemini-3-pro-image-preview",
-    "seedream": "seedream/4.5",
+    "seedream": "bytedance/seedream-4.5",
     "kling_5": "kling2.5-image-to-video",
     "kling_10": "kling2.5-image-to-video"
 }

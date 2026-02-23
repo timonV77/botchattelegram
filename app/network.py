@@ -12,7 +12,7 @@ BASE_URL = "https://polza.ai/api/v1"
 
 # Карта моделей (ОСТАВЛЕНА БЕЗ ИЗМЕНЕНИЙ)
 MODELS_MAP = {
-    "nanabanana": "nano-banana",
+    "nanabanana": "gemini-2.5-flash-image",
     "nanabanana_pro": "gemini-3-pro-image-preview",
     "seedream": "seedream-v4.5",
     "kling_5": "kling2.5-image-to-video",

@@ -30,10 +30,13 @@ def get_connector():
 async def _download_content_bytes(session: aiohttp.ClientSession, url: str) -> Tuple[
     Optional[bytes], Optional[str], Optional[str]]:
     try:
-        # Гарантируем, что для лога и запроса используем строку URL
+        # Извлекаем строку из возможного словаря
         target_url = url.get("url") if isinstance(url, dict) else url
+        if not target_url or not isinstance(target_url, str):
+            logging.error(f"❌ Некорректный URL для скачивания: {url}")
+            return None, None, str(url)
 
-        logging.info(f"📥 Начинаю скачивание готового файла: {str(target_url)[:60]}...")
+        logging.info(f"📥 Начинаю скачивание готового файла: {target_url[:60]}...")
         async with session.get(target_url) as response:
             if response.status != 200:
                 logging.error(f"❌ Ошибка скачивания (HTTP {response.status})")
@@ -62,7 +65,7 @@ async def process_with_polza(prompt: str, model_type: str, image_urls: List[str]
     model_id = MODELS_MAP.get(model_type, "gemini-2.5-flash-image")
     headers = {"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"}
 
-    # Добавлен параметр 'quality', который согласно документации Seedream 4.5 является обязательным
+    # Параметр 'quality' обязателен для Seedream 4.5
     input_data = {
         "prompt": prompt.strip(),
         "aspect_ratio": "1:1",
@@ -80,7 +83,6 @@ async def process_with_polza(prompt: str, model_type: str, image_urls: List[str]
             async with session.post(api_url, headers=headers, json=payload) as response:
                 res_text = await response.text()
                 if response.status not in (200, 201):
-                    # Логируем полный ответ сервера для диагностики 400-й ошибки
                     logging.error(f"📥 Ошибка API [{response.status}]: {res_text}")
                     return None, None, None
 
@@ -111,15 +113,17 @@ async def process_with_polza(prompt: str, model_type: str, image_urls: List[str]
                         if not url:
                             url = result.get("url")
 
-                        # Финальная проверка на извлечение строки из возможного словаря
-                        if isinstance(url, dict):
-                            url = url.get("url")
-
                         if url:
                             return await _download_content_bytes(session, url)
 
                     if status in ("failed", "cancelled", "error"):
-                        logging.error(f"❌ Ошибка генерации: {result.get('error')}")
+                        error_data = result.get('error', {})
+                        error_msg = error_data.get('message', '') if isinstance(error_data, dict) else str(error_data)
+
+                        if "nsfw" in error_msg.lower():
+                            logging.error("❌ Генерация отклонена: обнаружен запрещенный контент (NSFW)")
+                        else:
+                            logging.error(f"❌ Ошибка генерации: {error_msg}")
                         break
         except Exception as e:
             logging.error(f"❌ Ошибка: {e}", exc_info=True)
@@ -132,6 +136,7 @@ async def process_with_polza(prompt: str, model_type: str, image_urls: List[str]
 async def process_video_polza(prompt: str, model_type: str, image_url: str = None) -> Tuple[
     Optional[bytes], Optional[str], Optional[str]]:
     if not POLZA_API_KEY:
+        logging.error("❌ POLZA_API_KEY отсутствует")
         return None, None, None
 
     model_id = MODELS_MAP.get(model_type, "kling2.5-image-to-video")
@@ -156,8 +161,8 @@ async def process_video_polza(prompt: str, model_type: str, image_url: str = Non
         try:
             logging.info(f"📤 [VIDEO POST] Запуск. Модель: {model_id}")
             async with session.post(f"{BASE_URL}/media", headers=headers, json=payload) as response:
+                res_text = await response.text()
                 if response.status not in (200, 201):
-                    res_text = await response.text()
                     logging.error(f"📥 Ошибка API видео [{response.status}]: {res_text}")
                     return None, None, None
 
@@ -165,6 +170,8 @@ async def process_video_polza(prompt: str, model_type: str, image_url: str = Non
                 request_id = data.get("id") or data.get("requestId")
                 if not request_id:
                     return None, None, None
+
+            logging.info(f"🔑 Видео ID: {request_id}. Ожидание...")
 
             for attempt in range(1, 151):
                 await asyncio.sleep(12)
@@ -174,16 +181,26 @@ async def process_video_polza(prompt: str, model_type: str, image_url: str = Non
 
                     result = await resp.json()
                     status = str(result.get("status", "")).lower()
-
                     logging.info(f"📡 Видео статус -> [{status}] (попытка {attempt})")
 
                     if status in ("success", "completed"):
-                        output = result.get("output", [])
-                        url = output[0] if isinstance(output, list) and output else result.get("url")
+                        # Унифицированный поиск URL для видео
+                        url = None
+                        data_out = result.get("data") or result.get("output")
+
+                        if isinstance(data_out, list) and data_out:
+                            url = data_out[0]
+                        elif isinstance(data_out, dict):
+                            url = data_out.get("url")
+
+                        if not url:
+                            url = result.get("url")
+
                         if url:
                             return await _download_content_bytes(session, url)
 
                     if status in ("failed", "error"):
+                        logging.error(f"❌ Видео не создано: {result.get('error')}")
                         break
         except Exception as e:
             logging.error(f"❌ Ошибка видео-модуля: {e}")

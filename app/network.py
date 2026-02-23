@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 POLZA_API_KEY = os.getenv("POLZA_API_KEY")
-BASE_URL = "https://api.polza.ai/api/v1"
+BASE_URL = "https://polza.ai/api/v1"
 
 # Карта моделей (ОСТАВЛЕНА БЕЗ ИЗМЕНЕНИЙ)
 MODELS_MAP = {
@@ -50,78 +50,94 @@ async def _download_content_bytes(session: aiohttp.ClientSession, url: str) -> T
 
 async def process_with_polza(prompt: str, model_type: str, image_urls: List[str] = None) -> Tuple[
     Optional[bytes], Optional[str], Optional[str]]:
+    logging.info(f"🛠 [START] Модель: {model_type}. Ссылок на фото: {len(image_urls) if image_urls else 0}")
+
     if not POLZA_API_KEY:
-        logging.error("❌ Ключ POLZA_API_KEY не найден в .env")
+        logging.error("❌ POLZA_API_KEY отсутствует")
         return None, None, None
 
+    # BASE_URL берем без api. (согласно OpenAPI серверу в доках)
+    base_url_fixed = "https://polza.ai/api/v1"
     model_id = MODELS_MAP.get(model_type, "nano-banana")
+
     headers = {
         "Authorization": f"Bearer {POLZA_API_KEY}",
         "Content-Type": "application/json"
     }
 
-    # ИСПРАВЛЕНИЕ: Параметры теперь внутри ключа 'input', как требует документация
-    payload = {
-        "model": model_id,
-        "input": {
-            "prompt": prompt.strip(),
-            "aspect_ratio": "1:1",
-            "resolution": "1K"
-        },
-        "async": True
+    # Формируем input строго по MediaRequestDto
+    input_data = {
+        "prompt": prompt.strip(),
+        "aspect_ratio": "1:1"
     }
 
-    # ИСПРАВЛЕНИЕ: Картинки передаются в 'images' в виде объектов с type и data
+    # Если есть фото, добавляем их в массив объектов
     if image_urls:
-        payload["input"]["images"] = [
+        input_data["images"] = [
             {"type": "url", "data": url} for url in image_urls
         ]
 
+    payload = {
+        "model": model_id,
+        "input": input_data,
+        "async": True
+    }
+
     async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as session:
         try:
-            logging.info(f"📤 [API POST] Отправка запроса. Модель: {model_id}")
-            # В документации указан эндпоинт /media для работы с изображениями и референсами
-            async with session.post(f"{BASE_URL}/media", headers=headers, json=payload) as response:
+            # Эндпоинт из OpenAPI: /v1/media
+            api_url = f"{base_url_fixed}/media"
+            logging.info(f"📤 POST {api_url}")
+
+            async with session.post(api_url, headers=headers, json=payload) as response:
                 res_text = await response.text()
+                logging.info(f"📥 Response [{response.status}]: {res_text}")
+
                 if response.status not in (200, 201):
-                    logging.error(f"❌ Ошибка API Polza ({response.status}): {res_text}")
                     return None, None, None
 
                 data = await response.json()
-                # Новое API возвращает id вместо requestId
-                request_id = data.get("id") or data.get("requestId")
-                if not request_id: return None, None, None
+                request_id = data.get("id")  # В схеме MediaStatusPresenter это поле 'id'
+                if not request_id:
+                    return None, None, None
 
-            logging.info(f"🔑 Запрос принят. ID: {request_id}. Ожидаю готовности...")
+            logging.info(f"🔑 ID задачи: {request_id}. Ожидание завершения...")
 
             for attempt in range(1, 101):
                 await asyncio.sleep(10)
-                # Проверка статуса также через эндпоинт /media
-                async with session.get(f"{BASE_URL}/media/{request_id}", headers=headers) as resp:
-                    if resp.status != 200: continue
+                # Опрос статуса: GET /v1/media/{id}
+                async with session.get(f"{base_url_fixed}/media/{request_id}", headers=headers) as resp:
+                    if resp.status != 200:
+                        continue
+
                     result = await resp.json()
-                    status = str(result.get("status", "")).lower()
+                    status = result.get("status")
+                    logging.info(f"📡 Статус [{status}] (попытка {attempt})")
 
-                    logging.info(f"📡 Попытка {attempt}: Статус нейросети -> [{status}]")
+                    if status == "completed":
+                        # Согласно схеме, результат может быть в data или url
+                        # Обычно Polza возвращает массив в поле 'data' или прямую ссылку
+                        data_output = result.get("data", {})
+                        url = None
 
-                    if status in ("success", "completed"):
-                        # Извлекаем URL из нового формата ответа (поле output или url)
-                        output = result.get("output", [])
-                        url = output[0] if isinstance(output, list) and output else result.get("url")
+                        if isinstance(data_output, list) and data_output:
+                            url = data_output[0]
+                        elif isinstance(data_output, dict):
+                            url = data_output.get("url")
+                        else:
+                            url = result.get("url")
 
                         if url:
-                            logging.info(f"🎯 Фото готово!")
                             return await _download_content_bytes(session, url)
 
-                    if status in ("failed", "error", "canceled"):
-                        logging.error(f"❌ ГЕНЕРАЦИЯ ПРОВАЛЕНА: {result}")
+                    if status in ("failed", "cancelled"):
+                        logging.error(f"❌ Ошибка генерации: {result.get('error')}")
                         break
+
         except Exception as e:
-            logging.error(f"❌ Сетевое исключение: {e}")
+            logging.error(f"❌ Ошибка: {e}", exc_info=True)
 
     return None, None, None
-
-
 # ================= VIDEO GENERATION =================
 
 async def process_video_polza(prompt: str, model_type: str, image_url: str = None) -> Tuple[

@@ -10,16 +10,15 @@ load_dotenv()
 POLZA_API_KEY = os.getenv("POLZA_API_KEY")
 BASE_URL = "https://polza.ai/api/v1"
 
-# Карта моделей (ОСТАВЛЕНА БЕЗ ИЗМЕНЕНИЙ)
+# ТВОЙ МАРШРУТ МОДЕЛЕЙ (БЕЗ ИЗМЕНЕНИЙ)
 MODELS_MAP = {
     "nanabanana": "gemini-2.5-flash-image",
     "nanabanana_pro": "gemini-3-pro-image-preview",
-    "seedream": "seedream-v4.5",
+    "seedream": "seedream/4.5",
     "kling_5": "kling2.5-image-to-video",
     "kling_10": "kling2.5-image-to-video"
 }
 
-# Настройка таймаутов
 timeout_config = aiohttp.ClientTimeout(total=600, connect=30, sock_read=300)
 
 
@@ -30,20 +29,23 @@ def get_connector():
 async def _download_content_bytes(session: aiohttp.ClientSession, url: str) -> Tuple[
     Optional[bytes], Optional[str], Optional[str]]:
     try:
-        logging.info(f"📥 Начинаю скачивание готового файла: {url[:60]}...")
-        async with session.get(url) as response:
+        # Исправление: гарантируем, что для лога и запроса используем строку
+        target_url = url.get("url") if isinstance(url, dict) else url
+
+        logging.info(f"📥 Начинаю скачивание готового файла: {str(target_url)[:60]}...")
+        async with session.get(target_url) as response:
             if response.status != 200:
                 logging.error(f"❌ Ошибка скачивания (HTTP {response.status})")
-                return None, None, url
+                return None, None, target_url
 
             data = await response.read()
             content_type = response.headers.get("Content-Type", "").lower()
             ext = "mp4" if "video" in content_type else "jpg"
             logging.info(f"✅ Файл успешно скачан. Размер: {len(data)} байт")
-            return data, ext, url
+            return data, ext, target_url
     except Exception as e:
         logging.error(f"❌ Критическая ошибка при скачивании файла: {e}")
-        return None, None, url
+        return None, None, str(url)
 
 
 # ================= IMAGE GENERATION =================
@@ -56,84 +58,57 @@ async def process_with_polza(prompt: str, model_type: str, image_urls: List[str]
         logging.error("❌ POLZA_API_KEY отсутствует")
         return None, None, None
 
-    # BASE_URL берем без api. (согласно OpenAPI серверу в доках)
-    base_url_fixed = "https://polza.ai/api/v1"
-    model_id = MODELS_MAP.get(model_type, "nano-banana")
+    model_id = MODELS_MAP.get(model_type, "gemini-2.5-flash-image")
+    headers = {"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"}
 
-    headers = {
-        "Authorization": f"Bearer {POLZA_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    # Формируем input строго по MediaRequestDto
-    input_data = {
-        "prompt": prompt.strip(),
-        "aspect_ratio": "1:1"
-    }
-
-    # Если есть фото, добавляем их в массив объектов
+    input_data = {"prompt": prompt.strip(), "aspect_ratio": "1:1"}
     if image_urls:
-        input_data["images"] = [
-            {"type": "url", "data": url} for url in image_urls
-        ]
+        input_data["images"] = [{"type": "url", "data": url} for url in image_urls]
 
-    payload = {
-        "model": model_id,
-        "input": input_data,
-        "async": True
-    }
+    payload = {"model": model_id, "input": input_data, "async": True}
 
     async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as session:
         try:
-            # Эндпоинт из OpenAPI: /v1/media
-            api_url = f"{base_url_fixed}/media"
-            logging.info(f"📤 POST {api_url}")
-
+            api_url = f"{BASE_URL}/media"
             async with session.post(api_url, headers=headers, json=payload) as response:
-                res_text = await response.text()
-                logging.info(f"📥 Response [{response.status}]: {res_text}")
-
                 if response.status not in (200, 201):
+                    logging.error(f"📥 Ошибка API [{response.status}]")
                     return None, None, None
-
                 data = await response.json()
-                request_id = data.get("id")  # В схеме MediaStatusPresenter это поле 'id'
-                if not request_id:
-                    return None, None, None
+                request_id = data.get("id")
 
             logging.info(f"🔑 ID задачи: {request_id}. Ожидание завершения...")
 
             for attempt in range(1, 101):
                 await asyncio.sleep(10)
-                # Опрос статуса: GET /v1/media/{id}
-                async with session.get(f"{base_url_fixed}/media/{request_id}", headers=headers) as resp:
-                    if resp.status != 200:
-                        continue
-
+                async with session.get(f"{BASE_URL}/media/{request_id}", headers=headers) as resp:
+                    if resp.status != 200: continue
                     result = await resp.json()
-                    status = result.get("status")
+                    status = str(result.get("status", "")).lower()
                     logging.info(f"📡 Статус [{status}] (попытка {attempt})")
 
-                    if status == "completed":
-                        # Согласно схеме, результат может быть в data или url
-                        # Обычно Polza возвращает массив в поле 'data' или прямую ссылку
-                        data_output = result.get("data", {})
+                    if status in ("completed", "success"):
+                        # ИСПРАВЛЕНИЕ: Тщательно достаем строку URL из любого формата ответа
                         url = None
+                        data_output = result.get("data")
 
                         if isinstance(data_output, list) and data_output:
                             url = data_output[0]
                         elif isinstance(data_output, dict):
                             url = data_output.get("url")
-                        else:
-                            url = result.get("url")
+
+                        if not url: url = result.get("url")
+
+                        # Если на этом этапе url всё еще словарь {"url": "..."}, вынимаем строку
+                        if isinstance(url, dict):
+                            url = url.get("url")
 
                         if url:
                             return await _download_content_bytes(session, url)
 
-                    if status in ("failed", "cancelled"):
+                    if status in ("failed", "cancelled", "error"):
                         logging.error(f"❌ Ошибка генерации: {result.get('error')}")
                         break
-
         except Exception as e:
             logging.error(f"❌ Ошибка: {e}", exc_info=True)
 

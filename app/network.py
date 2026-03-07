@@ -4,6 +4,7 @@ import asyncio
 import logging
 from typing import Tuple, Optional, List
 from dotenv import load_dotenv
+import traceback
 
 load_dotenv()
 
@@ -237,76 +238,79 @@ async def process_video_polza(prompt: str, model_type: str, image_url: str = Non
 
 async def process_motion_control(prompt: str, character_image_url: str, motion_video_url: str) -> Tuple[
     Optional[bytes], Optional[str], Optional[str]]:
-    if not POLZA_API_KEY:
-        logging.error("❌ POLZA_API_KEY отсутствует")
+        if not POLZA_API_KEY:
+            logging.error("❌ POLZA_API_KEY отсутствует")
+            return None, None, None
+
+        model_id = MODELS_MAP.get("kling_motion", "kling/v2.6-motion-control")
+        headers = {
+            "Authorization": f"Bearer {POLZA_API_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        # Унифицированная структура для Polza /media эндпоинта
+        payload = {
+            "model": model_id,
+            "input": {
+                "prompt": prompt.strip() if prompt and prompt != "." else "Natural cinematic movement",
+                "image": character_image_url,  # Персонаж
+                "video_video": motion_video_url,  # Движение (специфическое поле для Kling Motion)
+                "mode": "720p",
+                "cfg_scale": 0.5
+            },
+            "async": True
+        }
+
+        async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as session:
+            try:
+                logging.info(f"📤 [MOTION POST] Отправка на /media. Модель: {model_id}")
+                # Используем базовый эндпоинт /media, так как он точно рабочий в твоем конфиге
+                async with session.post(f"{BASE_URL}/media", headers=headers, json=payload) as response:
+                    res_text = await response.text()
+                    if response.status not in (200, 201):
+                        logging.error(f"📥 Ошибка API Motion [{response.status}]: {res_text}")
+                        return None, None, None
+
+                    data = await response.json()
+                    request_id = data.get("id") or data.get("requestId")
+
+                if not request_id:
+                    logging.error(f"❌ Не получен ID задачи: {res_text}")
+                    return None, None, None
+
+                logging.info(f"🔑 Motion ID: {request_id}. Ожидание видео...")
+
+                # Используем твой проверенный цикл из видео-модуля
+                for attempt in range(1, 151):
+                    await asyncio.sleep(12)
+                    async with session.get(f"{BASE_URL}/media/{request_id}", headers=headers) as resp:
+                        if resp.status != 200:
+                            continue
+
+                        result = await resp.json()
+                        status = str(result.get("status", "")).lower()
+                        logging.info(f"📡 Motion статус -> [{status}] (попытка {attempt})")
+
+                        if status in ("success", "completed"):
+                            url = None
+                            data_out = result.get("data") or result.get("output")
+
+                            if isinstance(data_out, list) and data_out:
+                                url = data_out[0]
+                            elif isinstance(data_out, dict):
+                                url = data_out.get("url")
+
+                            if not url:
+                                url = result.get("url")
+
+                            if url:
+                                return await _download_content_bytes(session, url)
+
+                        if status in ("failed", "error"):
+                            logging.error(f"❌ Motion ошибка: {result.get('error')}")
+                            break
+
+            except Exception as e:
+                logging.error(f"❌ Ошибка в process_motion_control: {e}")
+                logging.error(traceback.format_exc())
         return None, None, None
-
-    headers = {
-        "Authorization": f"Bearer {POLZA_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    # ИСПРАВЛЕНИЕ: Используем структуру для генерации медиа, а не текстового чата
-    # Для Kling v2.6 Motion часто требуется плоская структура payload
-    payload = {
-        "model": "kling/v2.6-motion-control",
-        "input": {
-            "prompt": prompt.strip() if prompt and prompt != "." else "Professional cinematic movement",
-            "image_url": character_image_url,
-            "video_url": motion_video_url
-        },
-        "mode": "720p",
-        "character_orientation": "image"
-    }
-
-    async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as session:
-        try:
-            logging.info("📤 [MOTION CONTROL] Отправка запроса на генерацию...")
-
-            # Попробуем эндпоинт генерации (обычно /generations или /video/generations)
-            # Если Polza требует OpenAI-совместимость, пробуем /v1/video/generations
-            async with session.post(f"{BASE_URL}/video/generations", headers=headers, json=payload) as response:
-                res_text = await response.text()
-
-                # Если 404 на /video/generations, значит провайдер все же хочет /chat/completions,
-                # но с ДРУГИМ провайдером внутри. Но ошибка 500 чаще всего лечится сменой эндпоинта.
-                if response.status not in (200, 201, 202):
-                    logging.error(f"❌ Motion API Error [{response.status}]: {res_text}")
-                    return None, None, None
-
-                result = await response.json()
-                task_id = result.get("id")
-
-                if not task_id:
-                    # Если ссылка пришла сразу (бывает редко)
-                    video_url = result.get("url") or result.get("output", {}).get("url")
-                    if video_url:
-                        return None, "mp4", video_url
-                    logging.error(f"❌ Не удалось получить Task ID или URL: {result}")
-                    return None, None, None
-
-                # --- ЦИКЛ ОЖИДАНИЯ (POLLING) ---
-                logging.info(f"⏳ Видео в очереди (ID: {task_id}). Ожидаем готовности...")
-                for _ in range(60):  # Ждем до 5-10 минут (60 итераций по 10 сек)
-                    await asyncio.sleep(10)
-                    async with session.get(f"{BASE_URL}/tasks/{task_id}", headers=headers) as status_res:
-                        if status_res.status == 200:
-                            task_data = await status_res.json()
-                            status = task_data.get("status")
-
-                            if status == "completed":
-                                final_url = task_data.get("output", {}).get("url") or task_data.get("url")
-                                logging.info(f"✅ Видео готово: {final_url}")
-                                return None, "mp4", final_url
-
-                            if status == "failed":
-                                logging.error(f"❌ Генерация провалена: {task_data}")
-                                break
-
-                logging.error("⌛ Превышено время ожидания видео.")
-
-        except Exception as e:
-            logging.error(f"❌ Ошибка в process_motion_control: {e}")
-            logging.error(traceback.format_exc())
-
-    return None, None, None

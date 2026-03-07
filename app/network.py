@@ -238,78 +238,60 @@ async def process_video_polza(prompt: str, model_type: str, image_url: str = Non
 
 async def process_motion_control(prompt: str, character_image_url: str, motion_video_url: str) -> Tuple[
     Optional[bytes], Optional[str], Optional[str]]:
-        if not POLZA_API_KEY:
-            logging.error("❌ POLZA_API_KEY отсутствует")
-            return None, None, None
+    if not POLZA_API_KEY:
+        logging.error("❌ POLZA_API_KEY отсутствует")
+        return None, None, None
 
-        model_id = MODELS_MAP.get("kling_motion", "kling/v2.6-motion-control")
-        headers = {
-            "Authorization": f"Bearer {POLZA_API_KEY}",
-            "Content-Type": "application/json"
+    headers = {
+        "Authorization": f"Bearer {POLZA_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    # СТРОГО ПО ДОКУМЕНТАЦИИ: формат OpenAI Chat Completions
+    payload = {
+        "model": "kling/v2.6-motion-control",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt.strip() if prompt and prompt != "." else "Natural movement"},
+                    {"type": "image_url", "image_url": {"url": character_image_url}},  # Референс персонажа
+                    {"type": "video_url", "video_url": {"url": motion_video_url}}  # Референс движения
+                ]
+            }
+        ],
+        # Дополнительные обязательные параметры из доков
+        "extra_body": {
+            "mode": "720p",
+            "character_orientation": "image"
         }
+    }
 
-        # Унифицированная структура для Polza /media эндпоинта
-        payload = {
-            "model": model_id,
-            "input": {
-                "prompt": prompt.strip() if prompt and prompt != "." else "Natural movement",
-                "image_url": character_image_url,  # Ссылка на фото лица
-                "video_url": motion_video_url,  # Ссылка на видео движения
-                "mode": "720p"
-            },
-            "async": True
-        }
+    async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as session:
+        try:
+            logging.info("📤 [MOTION CONTROL] Отправка в /chat/completions (OpenAI Style)")
 
-        async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as session:
-            try:
-                logging.info(f"📤 [MOTION POST] Отправка на /media. Модель: {model_id}")
-                # Используем базовый эндпоинт /media, так как он точно рабочий в твоем конфиге
-                async with session.post(f"{BASE_URL}/media", headers=headers, json=payload) as response:
-                    res_text = await response.text()
-                    if response.status not in (200, 201):
-                        logging.error(f"📥 Ошибка API Motion [{response.status}]: {res_text}")
-                        return None, None, None
-
-                    data = await response.json()
-                    request_id = data.get("id") or data.get("requestId")
-
-                if not request_id:
-                    logging.error(f"❌ Не получен ID задачи: {res_text}")
+            # ВАЖНО: Используем эндпоинт чата
+            async with session.post(f"{BASE_URL}/chat/completions", headers=headers, json=payload) as response:
+                res_text = await response.text()
+                if response.status not in (200, 201):
+                    logging.error(f"❌ Motion API Error [{response.status}]: {res_text}")
                     return None, None, None
 
-                logging.info(f"🔑 Motion ID: {request_id}. Ожидание видео...")
+                result = await response.json()
 
-                # Используем твой проверенный цикл из видео-модуля
-                for attempt in range(1, 151):
-                    await asyncio.sleep(12)
-                    async with session.get(f"{BASE_URL}/media/{request_id}", headers=headers) as resp:
-                        if resp.status != 200:
-                            continue
+                # В OpenAI формате результат может быть либо ссылкой в тексте, либо в поле content
+                # Polza для видео обычно возвращает JSON с ссылкой в content
+                video_url = result['choices'][0]['message'].get('content')
 
-                        result = await resp.json()
-                        status = str(result.get("status", "")).lower()
-                        logging.info(f"📡 Motion статус -> [{status}] (попытка {attempt})")
+                if video_url and "http" in video_url:
+                    logging.info(f"✅ Ссылка на видео получена: {video_url}")
+                    return await _download_content_bytes(session, video_url)
+                else:
+                    logging.error(f"❌ API не вернуло ссылку. Ответ: {result}")
 
-                        if status in ("success", "completed"):
-                            url = None
-                            data_out = result.get("data") or result.get("output")
+        except Exception as e:
+            logging.error(f"❌ Ошибка в process_motion_control: {e}")
+            logging.error(traceback.format_exc())
 
-                            if isinstance(data_out, list) and data_out:
-                                url = data_out[0]
-                            elif isinstance(data_out, dict):
-                                url = data_out.get("url")
-
-                            if not url:
-                                url = result.get("url")
-
-                            if url:
-                                return await _download_content_bytes(session, url)
-
-                        if status in ("failed", "error"):
-                            logging.error(f"❌ Motion ошибка: {result.get('error')}")
-                            break
-
-            except Exception as e:
-                logging.error(f"❌ Ошибка в process_motion_control: {e}")
-                logging.error(traceback.format_exc())
-        return None, None, None
+    return None, None, None

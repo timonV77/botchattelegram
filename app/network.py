@@ -11,7 +11,6 @@ load_dotenv()
 POLZA_API_KEY = os.getenv("POLZA_API_KEY")
 BASE_URL = "https://polza.ai/api/v1"
 
-# ТВОЙ МАРШРУТ МОДЕЛЕЙ (БЕЗ ИЗМЕНЕНИЙ)
 MODELS_MAP = {
     "nanabanana": "gemini-2.5-flash-image",
     "nanabanana_pro": "gemini-3-pro-image-preview",
@@ -21,7 +20,6 @@ MODELS_MAP = {
     "kling_motion": "kling/v2.6-motion-control"
 }
 
-# Настройка таймаутов
 timeout_config = aiohttp.ClientTimeout(total=600, connect=30, sock_read=300)
 
 
@@ -32,7 +30,6 @@ def get_connector():
 async def _download_content_bytes(session: aiohttp.ClientSession, url: str) -> Tuple[
     Optional[bytes], Optional[str], Optional[str]]:
     try:
-        # Извлекаем строку из возможного словаря
         target_url = url.get("url") if isinstance(url, dict) else url
         if not target_url or not isinstance(target_url, str):
             logging.error(f"❌ Некорректный URL для скачивания: {url}")
@@ -55,15 +52,11 @@ async def _download_content_bytes(session: aiohttp.ClientSession, url: str) -> T
 
 
 async def upload_to_telegraph(image_bytes: bytes) -> Optional[str]:
-    """
-    Загружает изображение на Telegraph и возвращает прямую ссылку.
-    """
     try:
         form = aiohttp.FormData()
         form.add_field('file', image_bytes, filename='file.jpg', content_type='image/jpeg')
 
         async with aiohttp.ClientSession() as session:
-            # Официальный эндпоинт загрузки Telegraph
             async with session.post('https://telegra.ph/upload', data=form) as resp:
                 if resp.status == 200:
                     data = await resp.json()
@@ -78,6 +71,8 @@ async def upload_to_telegraph(image_bytes: bytes) -> Optional[str]:
         logging.error(f"❌ Критическая ошибка Telegraph: {e}")
 
     return None
+
+
 # ================= IMAGE GENERATION =================
 
 async def process_with_polza(prompt: str, model_type: str, image_urls: List[str] = None) -> Tuple[
@@ -91,7 +86,6 @@ async def process_with_polza(prompt: str, model_type: str, image_urls: List[str]
     model_id = MODELS_MAP.get(model_type, "gemini-2.5-flash-image")
     headers = {"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"}
 
-    # Параметр 'quality' обязателен для Seedream 4.5
     input_data = {
         "prompt": prompt.strip(),
         "aspect_ratio": "1:1",
@@ -210,7 +204,6 @@ async def process_video_polza(prompt: str, model_type: str, image_url: str = Non
                     logging.info(f"📡 Видео статус -> [{status}] (попытка {attempt})")
 
                     if status in ("success", "completed"):
-                        # Унифицированный поиск URL для видео
                         url = None
                         data_out = result.get("data") or result.get("output")
 
@@ -251,7 +244,6 @@ async def process_motion_control(prompt: str, character_image_url: str, motion_v
         "model": "kling/v2.6-motion-control",
         "input": {
             "prompt": prompt.strip() if prompt and prompt != "." else "Natural movement",
-            # ✅ FIX: передаём объекты вместо голых строк
             "images": [{"type": "url", "data": character_image_url}],
             "videos": [{"type": "url", "data": motion_video_url}],
             "mode": "720p",
@@ -260,7 +252,7 @@ async def process_motion_control(prompt: str, character_image_url: str, motion_v
         "async": True
     }
 
-    MAX_ATTEMPTS = 80  # ~16 минут максимум
+    MAX_ATTEMPTS = 80
     POLL_INTERVAL = 12
 
     async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as session:
@@ -290,10 +282,9 @@ async def process_motion_control(prompt: str, character_image_url: str, motion_v
                         continue
 
                     result = await resp.json()
-
-
                     status = str(result.get("status", "")).lower()
-                    logging.info(f"📡 Motion статус -> [{status}] (попытка {attempt})")
+
+                    logging.info(f"📡 Motion [{status}] (попытка {attempt}) | RAW: {result}")
 
                     if status in ("success", "completed"):
                         url = None
@@ -313,7 +304,6 @@ async def process_motion_control(prompt: str, character_image_url: str, motion_v
                         logging.error(f"❌ Motion ошибка: {error_info}")
                         return None, None, None
 
-            # ✅ FIX: таймаут вместо бесконечного ожидания
             logging.error(f"⏰ Motion {request_id} — таймаут после {MAX_ATTEMPTS} попыток")
             return None, None, None
 

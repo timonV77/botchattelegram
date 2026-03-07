@@ -252,13 +252,9 @@ async def process_motion_control(prompt: str, character_image_url: str, motion_v
         payload = {
             "model": model_id,
             "input": {
-                "prompt": prompt.strip() if prompt and prompt != "." else "Natural cinematic movement",
-                # Пробуем передать как массив, так как API просит "минимум 1 изображение"
-                "images": [
-                    {"type": "url", "data": character_image_url}
-                ],
-                # Поле для видео-референса в Kling Motion обычно называется 'video' или 'motion_video'
-                "video": motion_video_url,
+                "prompt": prompt.strip() if prompt and prompt != "." else "Natural movement",
+                "image_url": character_image_url,  # Ссылка на фото лица
+                "video_url": motion_video_url,  # Ссылка на видео движения
                 "mode": "720p"
             },
             "async": True

@@ -16,7 +16,8 @@ MODELS_MAP = {
     "nanabanana_pro": "gemini-3-pro-image-preview",
     "seedream": "bytedance/seedream-4.5",
     "kling_5": "kling2.5-image-to-video",
-    "kling_10": "kling2.5-image-to-video"
+    "kling_10": "kling2.5-image-to-video",
+    "kling_motion": "kling/v2.6-motion-control"
 }
 
 # Настройка таймаутов
@@ -228,5 +229,64 @@ async def process_video_polza(prompt: str, model_type: str, image_url: str = Non
                         break
         except Exception as e:
             logging.error(f"❌ Ошибка видео-модуля: {e}")
+
+    return None, None, None
+
+
+# ================= MOTION CONTROL (Kling v2.6) =================
+
+async def process_motion_control(prompt: str, character_image_url: str, motion_video_url: str) -> Tuple[
+    Optional[bytes], Optional[str], Optional[str]]:
+
+    if not POLZA_API_KEY:
+        logging.error("❌ POLZA_API_KEY отсутствует")
+        return None, None, None
+
+    headers = {
+        "Authorization": f"Bearer {POLZA_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    # Структура запроса согласно документации Polza AI (OpenAI SDK Style)
+    payload = {
+        "model": "kling/v2.6-motion-control",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt.strip() if prompt else "Natural movement"},
+                    {"type": "image_url", "image_url": {"url": character_image_url}},  # Референс персонажа
+                    {"type": "video_url", "video_url": {"url": motion_video_url}}  # Референс движения
+                ]
+            }
+        ],
+        "extra_body": {
+            "mode": "720p",
+            "character_orientation": "image"  # Это критически важно для сохранения лица с фото
+        }
+    }
+
+    async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as session:
+        try:
+            logging.info("📤 [MOTION CONTROL] Отправка Image + Video референсов на /chat/completions")
+            # ВНИМАНИЕ: Для этой модели используется эндпоинт /chat/completions
+            async with session.post(f"{BASE_URL}/chat/completions", headers=headers, json=payload) as response:
+                res_text = await response.text()
+                if response.status not in (200, 201):
+                    logging.error(f"❌ Motion API Error [{response.status}]: {res_text}")
+                    return None, None, None
+
+                result = await response.json()
+
+                # В OpenAI-формате ссылка на готовый файл обычно возвращается сразу в поле content
+                video_url = result['choices'][0]['message'].get('content')
+
+                if video_url and video_url.startswith("http"):
+                    return await _download_content_bytes(session, video_url)
+                else:
+                    logging.error(f"❌ API не вернуло прямую ссылку на видео в content: {result}")
+
+        except Exception as e:
+            logging.error(f"❌ Ошибка в process_motion_control: {e}")
 
     return None, None, None

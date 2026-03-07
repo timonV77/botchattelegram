@@ -41,9 +41,14 @@ def kling_inline() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🎬 Kling 10 сек — 10 ⚡", callback_data="model_kling_10")
         ],
         [
+            # Новая кнопка для Motion Control
+            InlineKeyboardButton(text="🎭 Motion Control (Лицо + Видео) — 10 ⚡", callback_data="model_kling_motion")
+        ],
+        [
             InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
         ]
     ])
+
 # --- Кнопки пополнения баланса ---
 def buy_inline() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[

@@ -2,7 +2,7 @@ import logging
 import traceback
 import asyncio
 from typing import List, Optional
-
+from app.network import process_motion_control
 from aiogram import Router, types, F, Bot
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -129,6 +129,49 @@ async def background_video_gen(chat_id: int, photo_ids: List[str], prompt: str, 
 # ХЕНДЛЕРЫ
 # ================================
 
+# --- НОВАЯ ФОНОВАЯ ФУНКЦИЯ ДЛЯ MOTION CONTROL ---
+async def background_motion_gen(chat_id: int, char_photo_id: str, motion_video_id: str, prompt: str, user_id: int):
+    try:
+        logging.info(f"🎭 [MOTION TASK] Старт для {user_id}")
+
+        # Ссылки на фото персонажа и видео движения
+        char_url = await get_telegram_photo_url(global_bot, char_photo_id)
+        motion_url = await get_telegram_photo_url(global_bot, motion_video_id)
+
+        # Вызов функции из network.py (теперь импорт станет активным)
+        _, _, result_url = await process_motion_control(prompt, char_url, motion_url)
+
+        if not result_url:
+            await global_bot.send_message(chat_id, "❌ Ошибка API: не удалось создать видео.")
+            return
+
+        final_v_url = result_url.get("url") if isinstance(result_url, dict) else result_url
+
+        await global_bot.send_video(
+            chat_id=chat_id,
+            video=str(final_v_url),
+            caption="🎭 Ваше Motion Control видео готово!",
+            reply_markup=main_kb()
+        )
+
+        await charge(user_id, "kling_motion")
+
+    except Exception as e:
+        logging.error(f"❌ [MOTION ERROR]: {e}")
+        await global_bot.send_message(chat_id, "⚠️ Ошибка при генерации видео.")
+
+
+@router.message(PhotoProcess.waiting_for_motion_video, F.video)
+async def on_motion_video(message: types.Message, state: FSMContext):
+    await state.update_data(motion_video_id=message.video.file_id)
+    await message.answer(
+        "✍️ Опишите детали движения промптом (или просто '.', если нечего добавить):",
+        reply_markup=cancel_kb()
+    )
+    await state.set_state(PhotoProcess.waiting_for_prompt)
+
+
+
 @router.message(F.text == "❌ Отменить")
 async def cancel_text(message: types.Message, state: FSMContext):
     await state.clear()
@@ -191,8 +234,26 @@ async def on_prompt(message: types.Message, state: FSMContext):
         await state.clear()
         return await message.answer("❌ Недостаточно средств.", reply_markup=main_kb())
 
-    func = background_video_gen if "kling" in model.lower() else background_photo_gen
-    task = asyncio.create_task(func(message.chat.id, photo_ids, message.text, model, user_id))
+    # --- НОВАЯ ЛОГИКА ВЫБОРА ЗАДАЧИ ---
+    if model == "kling_motion":
+        # Достаем ID видео-референса, который сохранили на предыдущем шаге
+        motion_video_id = data.get("motion_video_id")
+
+        # Создаем задачу именно для Motion Control
+        # Здесь мы вызываем функцию, которая внутри себя использует process_motion_control
+        task = asyncio.create_task(background_motion_gen(
+            message.chat.id,
+            photo_ids[0],
+            motion_video_id,
+            message.text,
+            user_id
+        ))
+    else:
+        # Старая логика для остальных моделей (Kling 5/10 и фото)
+        func = background_video_gen if "kling" in model.lower() else background_photo_gen
+        task = asyncio.create_task(func(message.chat.id, photo_ids, message.text, model, user_id))
+    # ---------------------------------
+
     active_tasks.add(task)
     task.add_done_callback(active_tasks.discard)
 

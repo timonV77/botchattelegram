@@ -10,3 +10,4 @@ class PhotoProcess(StatesGroup):
     waiting_for_video_photo = State()  # Ожидание фото для видео
     waiting_for_duration = State()     # Выбор 5 или 10 секунд
     waiting_for_video_prompt = State() # Описание движения
+    waiting_for_motion_video = State()

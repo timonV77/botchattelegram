@@ -3,4 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="Python 3.13 (neuro_photo_bot)" />
   </component>
+  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.14 (neuro_photo_bot)" project-jdk-type="Python SDK" />
 </project>

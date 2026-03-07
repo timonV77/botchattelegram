@@ -101,7 +101,6 @@ async def start_photo(message: types.Message, state: FSMContext):
     balance = await db.get_balance(message.from_user.id)
     if balance < 1: return await message.answer("❌ Недостаточно генераций.")
     await state.clear()
-    # Сначала выбираем модель
     await message.answer("🤖 Выберите нейросеть для фото:", reply_markup=model_inline())
     await state.set_state(PhotoProcess.waiting_for_model)
 
@@ -109,11 +108,10 @@ async def start_photo(message: types.Message, state: FSMContext):
 @router.message(F.text == "🎬 Оживить фото")
 async def start_animation(message: types.Message, state: FSMContext):
     balance = await db.get_balance(message.from_user.id)
-    if balance < 5:
-        return await message.answer("❌ Для оживления нужно минимум 5 ⚡", reply_markup=main_kb())
+    if not await has_balance(message.from_user.id, "kling_5"):
+        return await message.answer("❌ Недостаточно генераций ⚡", reply_markup=main_kb())
     await state.clear()
     await state.update_data(is_video_mode=True)
-    # Сначала выбираем режим Kling
     await message.answer("🎬 Выберите режим оживления:", reply_markup=kling_inline())
     await state.set_state(PhotoProcess.waiting_for_model)
 
@@ -125,7 +123,6 @@ async def on_model(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(chosen_model=model_key)
     await callback.message.edit_text(f"🎯 Выбрана модель: {MODEL_NAMES.get(model_key, model_key)}")
 
-    # После выбора модели ВСЕГДА просим сначала фото
     await callback.message.answer(
         "👤 **Шаг 1:** Пришлите фотографию персонажа (лицо):",
         reply_markup=cancel_kb()
@@ -136,7 +133,6 @@ async def on_model(callback: types.CallbackQuery, state: FSMContext):
 # --- ХЕНДЛЕР ПРИЕМА ФОТО ---
 @router.message(PhotoProcess.waiting_for_photo, F.photo)
 async def on_photo(message: types.Message, state: FSMContext, album: Optional[List[types.Message]] = None):
-    # Берем до 4 фото (для NanoBanana) или 1 для Kling
     photo_ids = [msg.photo[-1].file_id for msg in album[:4]] if album else [message.photo[-1].file_id]
     await state.update_data(photo_ids=photo_ids)
 
@@ -144,14 +140,12 @@ async def on_photo(message: types.Message, state: FSMContext, album: Optional[Li
     model = data.get("chosen_model")
 
     if model == "kling_motion":
-        # Если выбрали Motion Control — просим видео-референс
         await message.answer(
             "💃 **Шаг 2:** Теперь пришлите **видео с движением**, которое нужно повторить:",
             reply_markup=cancel_kb()
         )
         await state.set_state(PhotoProcess.waiting_for_motion_video)
     else:
-        # Для остальных — просим промпт
         prompt_msg = "✍️ Опишите движение (или '.')" if "kling" in str(model).lower() else "✍️ Что изменить на фото?"
         await message.answer(prompt_msg, reply_markup=cancel_kb())
         await state.set_state(PhotoProcess.waiting_for_prompt)
@@ -165,6 +159,12 @@ async def on_motion_video(message: types.Message, state: FSMContext):
     await state.set_state(PhotoProcess.waiting_for_prompt)
 
 
+# ✅ FIX: обработка невалидного ввода вместо видео
+@router.message(PhotoProcess.waiting_for_motion_video)
+async def on_motion_video_invalid(message: types.Message, state: FSMContext):
+    await message.answer("⚠️ Пожалуйста, отправьте именно **видео**, а не фото или текст.", reply_markup=cancel_kb())
+
+
 # --- ФИНАЛЬНЫЙ ХЕНДЛЕР (ПРОМПТ И ЗАПУСК) ---
 @router.message(PhotoProcess.waiting_for_prompt)
 async def on_prompt(message: types.Message, state: FSMContext):
@@ -175,16 +175,14 @@ async def on_prompt(message: types.Message, state: FSMContext):
 
     if not await has_balance(user_id, model):
         await state.clear()
-        return await message.answer("❌ Недостаточно средств.", reply_markup=main_kb())
+        return await message.answer("❌ Недостаточн�� средств.", reply_markup=main_kb())
 
     if model == "kling_motion":
         motion_video_id = data.get("motion_video_id")
-        # Вызываем функцию из внешнего сервиса app/services/motion.py
         task = asyncio.create_task(background_motion_gen(
             global_bot, message.chat.id, photo_ids[0], motion_video_id, message.text, user_id
         ))
     else:
-        # Стандартная логика для Kling 5/10 или NanoBanana
         func = background_video_gen if "kling" in model.lower() else background_photo_gen
         task = asyncio.create_task(func(message.chat.id, photo_ids, message.text, model, user_id))
 

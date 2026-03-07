@@ -247,22 +247,25 @@ async def process_motion_control(prompt: str, character_image_url: str, motion_v
         "Content-Type": "application/json"
     }
 
-    # Скрещиваем эндпоинт /media и параметры из таблицы на сайте
     payload = {
         "model": "kling/v2.6-motion-control",
         "input": {
             "prompt": prompt.strip() if prompt and prompt != "." else "Natural movement",
-            "images": [character_image_url],  # На сайте написано images (мн. число)
-            "videos": [motion_video_url],  # На сайте написано videos (мн. число)
+            # ✅ FIX: передаём объекты вместо голых строк
+            "images": [{"type": "url", "data": character_image_url}],
+            "videos": [{"type": "url", "data": motion_video_url}],
             "mode": "720p",
             "character_orientation": "image"
         },
         "async": True
     }
 
+    MAX_ATTEMPTS = 80  # ~16 минут максимум
+    POLL_INTERVAL = 12
+
     async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as session:
         try:
-            logging.info("📤 [MOTION CONTROL] Пробуем эндпоинт /media с параметрами сайта...")
+            logging.info("📤 [MOTION CONTROL] Отправка в Kling v2.6...")
             async with session.post(f"{BASE_URL}/media", headers=headers, json=payload) as response:
                 res_text = await response.text()
 
@@ -277,13 +280,14 @@ async def process_motion_control(prompt: str, character_image_url: str, motion_v
                     logging.error(f"❌ Не получен ID задачи: {res_text}")
                     return None, None, None
 
-            logging.info(f"🔑 Motion ID: {request_id}. Начинаем ожидание (Polling)...")
+            logging.info(f"🔑 Motion ID: {request_id}. Начинаем ожидание...")
 
-            # Используем твой стандартный цикл ожидания (из process_video_polza)
-            for attempt in range(1, 151):
-                await asyncio.sleep(12)
+            for attempt in range(1, MAX_ATTEMPTS + 1):
+                await asyncio.sleep(POLL_INTERVAL)
                 async with session.get(f"{BASE_URL}/media/{request_id}", headers=headers) as resp:
-                    if resp.status != 200: continue
+                    if resp.status != 200:
+                        logging.warning(f"⚠️ Polling HTTP {resp.status} (попытка {attempt})")
+                        continue
 
                     result = await resp.json()
                     status = str(result.get("status", "")).lower()
@@ -296,13 +300,20 @@ async def process_motion_control(prompt: str, character_image_url: str, motion_v
                             url = data_out[0]
                         elif isinstance(data_out, dict):
                             url = data_out.get("url")
-                        if not url: url = result.get("url")
+                        if not url:
+                            url = result.get("url")
 
-                        if url: return await _download_content_bytes(session, url)
+                        if url:
+                            return await _download_content_bytes(session, url)
 
-                    if status in ("failed", "error"):
-                        logging.error(f"❌ Motion ошибка: {result.get('error')}")
-                        break
+                    if status in ("failed", "error", "cancelled"):
+                        error_info = result.get("error", "Неизвестная ошибка")
+                        logging.error(f"❌ Motion ошибка: {error_info}")
+                        return None, None, None
+
+            # ✅ FIX: таймаут вместо бесконечного ожидания
+            logging.error(f"⏰ Motion {request_id} — таймаут после {MAX_ATTEMPTS} попыток")
+            return None, None, None
 
         except Exception as e:
             logging.error(f"❌ Ошибка в process_motion_control: {e}")

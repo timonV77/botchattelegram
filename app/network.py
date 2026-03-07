@@ -290,8 +290,10 @@ async def process_motion_control(prompt: str, character_image_url: str, motion_v
                         continue
 
                     result = await resp.json()
+
+
                     status = str(result.get("status", "")).lower()
-                    logging.info(f"📡 Motion статус -> [{status}] (попытка {attempt})")
+                    logging.info(f"📡 Motion статус -> [{status}] (попытка {attempt}) | RAW: {result}")
 
                     if status in ("success", "completed"):
                         url = None

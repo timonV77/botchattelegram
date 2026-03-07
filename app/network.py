@@ -247,48 +247,62 @@ async def process_motion_control(prompt: str, character_image_url: str, motion_v
         "Content-Type": "application/json"
     }
 
-    # СТРОГО ПО ДОКУМЕНТАЦИИ: формат OpenAI Chat Completions
+    # Скрещиваем эндпоинт /media и параметры из таблицы на сайте
     payload = {
         "model": "kling/v2.6-motion-control",
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt.strip() if prompt and prompt != "." else "Natural movement"},
-                    {"type": "image_url", "image_url": {"url": character_image_url}},  # Референс персонажа
-                    {"type": "video_url", "video_url": {"url": motion_video_url}}  # Референс движения
-                ]
-            }
-        ],
-        # Дополнительные обязательные параметры из доков
-        "extra_body": {
+        "input": {
+            "prompt": prompt.strip() if prompt and prompt != "." else "Natural movement",
+            "images": [character_image_url],  # На сайте написано images (мн. число)
+            "videos": [motion_video_url],  # На сайте написано videos (мн. число)
             "mode": "720p",
             "character_orientation": "image"
-        }
+        },
+        "async": True
     }
 
     async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as session:
         try:
-            logging.info("📤 [MOTION CONTROL] Отправка в /chat/completions (OpenAI Style)")
-
-            # ВАЖНО: Используем эндпоинт чата
-            async with session.post(f"{BASE_URL}/chat/completions", headers=headers, json=payload) as response:
+            logging.info("📤 [MOTION CONTROL] Пробуем эндпоинт /media с параметрами сайта...")
+            async with session.post(f"{BASE_URL}/media", headers=headers, json=payload) as response:
                 res_text = await response.text()
+
                 if response.status not in (200, 201):
                     logging.error(f"❌ Motion API Error [{response.status}]: {res_text}")
                     return None, None, None
 
-                result = await response.json()
+                data = await response.json()
+                request_id = data.get("id") or data.get("requestId")
 
-                # В OpenAI формате результат может быть либо ссылкой в тексте, либо в поле content
-                # Polza для видео обычно возвращает JSON с ссылкой в content
-                video_url = result['choices'][0]['message'].get('content')
+                if not request_id:
+                    logging.error(f"❌ Не получен ID задачи: {res_text}")
+                    return None, None, None
 
-                if video_url and "http" in video_url:
-                    logging.info(f"✅ Ссылка на видео получена: {video_url}")
-                    return await _download_content_bytes(session, video_url)
-                else:
-                    logging.error(f"❌ API не вернуло ссылку. Ответ: {result}")
+            logging.info(f"🔑 Motion ID: {request_id}. Начинаем ожидание (Polling)...")
+
+            # Используем твой стандартный цикл ожидания (из process_video_polza)
+            for attempt in range(1, 151):
+                await asyncio.sleep(12)
+                async with session.get(f"{BASE_URL}/media/{request_id}", headers=headers) as resp:
+                    if resp.status != 200: continue
+
+                    result = await resp.json()
+                    status = str(result.get("status", "")).lower()
+                    logging.info(f"📡 Motion статус -> [{status}] (попытка {attempt})")
+
+                    if status in ("success", "completed"):
+                        url = None
+                        data_out = result.get("data") or result.get("output")
+                        if isinstance(data_out, list) and data_out:
+                            url = data_out[0]
+                        elif isinstance(data_out, dict):
+                            url = data_out.get("url")
+                        if not url: url = result.get("url")
+
+                        if url: return await _download_content_bytes(session, url)
+
+                    if status in ("failed", "error"):
+                        logging.error(f"❌ Motion ошибка: {result.get('error')}")
+                        break
 
         except Exception as e:
             logging.error(f"❌ Ошибка в process_motion_control: {e}")

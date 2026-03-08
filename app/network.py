@@ -87,7 +87,7 @@ async def process_with_polza(prompt: str, model_type: str, image_urls: List[str]
     headers = {"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"}
 
     input_data = {
-        "prompt": prompt.strip(),
+                "prompt": (prompt or "").strip(),
         "aspect_ratio": "1:1",
         "quality": "basic"
     }
@@ -168,7 +168,7 @@ async def process_video_polza(prompt: str, model_type: str, image_url: str = Non
     payload = {
         "model": model_id,
         "input": {
-            "prompt": prompt.strip(),
+            "prompt": (prompt or "").strip(),
             "duration": 10 if model_type == "kling_10" else 5,
             "cfgScale": 0.5
         },

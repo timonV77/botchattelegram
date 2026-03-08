@@ -102,3 +102,10 @@ async def get_referrals_count(user_id: int):
     await init_db()
     async with db_pool.acquire() as conn:
         return await conn.fetchval("SELECT COUNT(*) FROM users WHERE referrer_id = $1", int(user_id)) or 0
+
+async def get_all_user_ids():
+    """Возвращает список всех user_id из базы."""
+    await init_db()
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("SELECT user_id FROM users")
+        return [row["user_id"] for row in rows]

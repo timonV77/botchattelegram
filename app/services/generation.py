@@ -10,7 +10,8 @@ COSTS = {
     "nanabanana_pro": 5,
     "seedream": 2,
     "kling_5": 5,
-    "kling_10": 10
+    "kling_10": 10,
+    "kling_motion": 5
 }
 
 def cost_for(model: str) -> int:

@@ -1,10 +1,10 @@
 import logging
-import asyncio
 import traceback
-from app.services.telegram_file import get_telegram_photo_url
+from app.services.telegram_file import download_telegram_file, bytes_to_base64_data_uri, get_telegram_photo_url
 from app.network import process_motion_control
 from app.services.generation import charge
-import database as db
+from app.network import upload_to_telegraph
+
 
 async def background_motion_gen(bot, chat_id: int, char_photo_id: str, motion_video_id: str, prompt: str, user_id: int):
     try:
@@ -15,35 +15,44 @@ async def background_motion_gen(bot, chat_id: int, char_photo_id: str, motion_vi
             await bot.send_message(chat_id, "⚠️ Не удалось получить фото или видео. Попробуйте заново.")
             return
 
-        char_url = await get_telegram_photo_url(bot, char_photo_id)
-        motion_url = await get_telegram_photo_url(bot, motion_video_id)
+        # Скачиваем фото и видео из Telegram
+        photo_bytes, photo_mime = await download_telegram_file(bot, char_photo_id)
+        video_bytes, video_mime = await download_telegram_file(bot, motion_video_id)
 
-        if not char_url or not motion_url:
-            await bot.send_message(chat_id, "❌ Ошибка при генерации ссылок. Попробуйте еще раз.")
+        if not photo_bytes or not video_bytes:
+            await bot.send_message(chat_id, "❌ Не удалось скачать фото или видео из Telegram. Попробуйте ещё раз.")
             return
+
+        # Фото — заливаем на Telegraph (публичный URL)
+        char_url = await upload_to_telegraph(photo_bytes)
+        if not char_url:
+            # Fallback — base64
+            char_url = bytes_to_base64_data_uri(photo_bytes, photo_mime)
+            logging.warning("⚠️ Telegraph недоступен, используем base64 для фото")
+
+        # Видео — base64 (Telegraph не поддерживает видео)
+        motion_url = bytes_to_base64_data_uri(video_bytes, video_mime)
 
         logging.info(f"🔗 Ссылки готовы. Отправка в Kling v2.6...")
         logging.info(f"  📷 Фото: {char_url[:80]}...")
-        logging.info(f"  🎥 Видео: {motion_url[:80]}...")
+        logging.info(f"  🎥 Видео: base64 ({len(video_bytes)} байт)")
 
-        video_bytes, ext, result_url = await process_motion_control(prompt, char_url, motion_url)
+        result_bytes, ext, result_url = await process_motion_control(prompt, char_url, motion_url)
 
-        if not video_bytes:
-            logging.error("❌ API вернуло пустой ре��ультат")
+        if not result_bytes:
+            logging.error("❌ API вернуло пустой результат")
             await bot.send_message(chat_id, "❌ Не удалось создать видео. Попробуйте другой промпт или видео-референс.")
             return
 
-        # Отправляем байты напрямую — не URL
         from aiogram.types import BufferedInputFile
-        video_file = BufferedInputFile(video_bytes, filename=f"motion_{user_id}.mp4")
+        video_file = BufferedInputFile(result_bytes, filename=f"motion_{user_id}.mp4")
 
         await bot.send_video(
             chat_id=chat_id,
             video=video_file,
-            caption="🎭 **Motion Control готов!**\nВаше фото ожило по видео-референсу.",
+            caption="🎭 Motion Control готов!\nВаше фото ожило по видео-референсу.",
         )
 
-        # ✅ Списание ПОСЛЕ успешной отправки
         await charge(user_id, "kling_motion")
         logging.info(f"✅ [MOTION SUCCESS] Видео отправлено пользователю {user_id}")
 

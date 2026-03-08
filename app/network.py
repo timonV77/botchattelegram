@@ -244,14 +244,19 @@ async def process_motion_control(prompt: str, character_image_url: str, motion_v
         "model": "kling/v2.6-motion-control",
         "input": {
             "prompt": prompt.strip() if prompt and prompt != "." else "Natural movement",
-            "images": [{"type": "url", "data": character_image_url}],
-            "videos": [{"type": "url", "data": motion_video_url}],
+            "images": [
+                {"type": "base64", "data": character_image_url} if character_image_url.startswith("data:") else {
+                    "type": "url", "data": character_image_url}
+            ],
+            "videos": [
+                {"type": "base64", "data": motion_video_url} if motion_video_url.startswith("data:") else {
+                    "type": "url", "data": motion_video_url}
+            ],
             "mode": "720p",
             "character_orientation": "image"
         },
         "async": True
     }
-
     MAX_ATTEMPTS = 80
     POLL_INTERVAL = 12
 

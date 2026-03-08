@@ -55,19 +55,40 @@ async def background_photo_gen(chat_id: int, photo_ids: List[str], prompt: str, 
         _, _, result_url = await generate(photo_urls, prompt, model)
         final_url = result_url.get("url") if isinstance(result_url, dict) else result_url
 
-        await global_bot.send_photo(
-            chat_id=chat_id,
-            photo=str(final_url),
-            caption="✨ Ваше изображение готово!",
-            reply_markup=main_kb()
-        )
+        if not final_url:
+            await global_bot.send_message(chat_id, "⚠️ Не удалось получить результат.")
+            return
+
+        # Если это URL — скачиваем и отправляем как файл
+        if isinstance(final_url, str) and final_url.startswith("http"):
+            async with aiohttp.ClientSession() as session:
+                async with session.get(final_url) as resp:
+                    if resp.status == 200:
+                        photo_bytes = await resp.read()
+                        from aiogram.types import BufferedInputFile
+                        input_file = BufferedInputFile(photo_bytes, filename="result.jpg")
+                        await global_bot.send_photo(
+                            chat_id=chat_id,
+                            photo=input_file,
+                            caption="✨ Ваше изображение готово!",
+                            reply_markup=main_kb()
+                        )
+                    else:
+                        await global_bot.send_message(chat_id, "⚠️ Не удалось скачать результат.")
+                        return
+        else:
+            await global_bot.send_photo(
+                chat_id=chat_id,
+                photo=str(final_url),
+                caption="✨ Ваше изображение готово!",
+                reply_markup=main_kb()
+            )
+
         await charge(user_id, model)
     except Exception as e:
         logging.error(f"❌ [PHOTO ERROR]: {e}")
         logging.error(traceback.format_exc())
         await global_bot.send_message(chat_id, "⚠️ Ошибка при отправке фото.")
-
-
 async def background_video_gen(chat_id: int, photo_ids: List[str], prompt: str, model: str, user_id: int):
     try:
         photo_url = await get_telegram_photo_url(global_bot, photo_ids[0])

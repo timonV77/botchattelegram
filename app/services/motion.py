@@ -26,18 +26,20 @@ async def background_motion_gen(bot, chat_id: int, char_photo_id: str, motion_vi
         logging.info(f"  📷 Фото: {char_url[:80]}...")
         logging.info(f"  🎥 Видео: {motion_url[:80]}...")
 
-        _, _, result_url = await process_motion_control(prompt, char_url, motion_url)
+        video_bytes, ext, result_url = await process_motion_control(prompt, char_url, motion_url)
 
-        if not result_url:
-            logging.error("❌ API вернуло пустой результат")
+        if not video_bytes:
+            logging.error("❌ API вернуло пустой ре��ультат")
             await bot.send_message(chat_id, "❌ Не удалось создать видео. Попробуйте другой промпт или видео-референс.")
             return
 
-        final_v_url = result_url.get("url") if isinstance(result_url, dict) else result_url
+        # Отправляем байты напрямую — не URL
+        from aiogram.types import BufferedInputFile
+        video_file = BufferedInputFile(video_bytes, filename=f"motion_{user_id}.mp4")
 
         await bot.send_video(
             chat_id=chat_id,
-            video=str(final_v_url),
+            video=video_file,
             caption="🎭 **Motion Control готов!**\nВаше фото ожило по видео-референсу.",
         )
 

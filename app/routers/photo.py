@@ -1,11 +1,13 @@
 import logging
 import traceback
 import asyncio
+import aiohttp
 from typing import List, Optional
 
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+from aiogram.types import BufferedInputFile
 
 from app.states import PhotoProcess
 from app.keyboards.reply import main_kb, cancel_kb
@@ -13,7 +15,6 @@ from app.keyboards.inline import model_inline, kling_inline
 from app.services.telegram_file import get_telegram_photo_url
 from app.services.generation import has_balance, generate, charge, generate_video
 
-# Импорт логики Motion Control из нового файла
 from app.services.motion import background_motion_gen
 
 import database as db
@@ -59,13 +60,11 @@ async def background_photo_gen(chat_id: int, photo_ids: List[str], prompt: str, 
             await global_bot.send_message(chat_id, "⚠️ Не удалось получить результат.")
             return
 
-        # Если это URL — скачиваем и отправляем как файл
         if isinstance(final_url, str) and final_url.startswith("http"):
             async with aiohttp.ClientSession() as session:
                 async with session.get(final_url) as resp:
                     if resp.status == 200:
                         photo_bytes = await resp.read()
-                        from aiogram.types import BufferedInputFile
                         input_file = BufferedInputFile(photo_bytes, filename="result.jpg")
                         await global_bot.send_photo(
                             chat_id=chat_id,
@@ -89,19 +88,37 @@ async def background_photo_gen(chat_id: int, photo_ids: List[str], prompt: str, 
         logging.error(f"❌ [PHOTO ERROR]: {e}")
         logging.error(traceback.format_exc())
         await global_bot.send_message(chat_id, "⚠️ Ошибка при отправке фото.")
+
+
 async def background_video_gen(chat_id: int, photo_ids: List[str], prompt: str, model: str, user_id: int):
     try:
         photo_url = await get_telegram_photo_url(global_bot, photo_ids[0])
         final_prompt = prompt if (prompt and prompt.strip() != ".") else "Cinematic movement, high quality"
-        _, _, video_url = await generate_video(photo_url, final_prompt, model)
-        final_v_url = video_url.get("url") if isinstance(video_url, dict) else video_url
+        video_bytes, ext, video_url = await generate_video(photo_url, final_prompt, model)
 
-        await global_bot.send_video(
-            chat_id=chat_id,
-            video=str(final_v_url),
-            caption="✅ Ваше видео готово!",
-            reply_markup=main_kb()
-        )
+        if video_bytes:
+            # Отправляем скачанные байты
+            video_file = BufferedInputFile(video_bytes, filename=f"video_{user_id}.mp4")
+            await global_bot.send_video(
+                chat_id=chat_id,
+                video=video_file,
+                caption="✅ Ваше видео готово!",
+                reply_markup=main_kb()
+            )
+        else:
+            # Fallback — пробуем URL
+            final_v_url = video_url.get("url") if isinstance(video_url, dict) else video_url
+            if final_v_url:
+                await global_bot.send_video(
+                    chat_id=chat_id,
+                    video=str(final_v_url),
+                    caption="✅ Ваше видео готово!",
+                    reply_markup=main_kb()
+                )
+            else:
+                await global_bot.send_message(chat_id, "⚠️ Не удалось получить видео.")
+                return
+
         await charge(user_id, model)
     except Exception as e:
         logging.error(f"❌ [VIDEO ERROR]: {e}")
@@ -128,7 +145,6 @@ async def start_photo(message: types.Message, state: FSMContext):
 
 @router.message(F.text == "🎬 Оживить фото")
 async def start_animation(message: types.Message, state: FSMContext):
-    balance = await db.get_balance(message.from_user.id)
     if not await has_balance(message.from_user.id, "kling_5"):
         return await message.answer("❌ Недостаточно генераций ⚡", reply_markup=main_kb())
     await state.clear()
@@ -145,7 +161,7 @@ async def on_model(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(f"🎯 Выбрана модель: {MODEL_NAMES.get(model_key, model_key)}")
 
     await callback.message.answer(
-        "👤 **Шаг 1:** Пришлите фотографию персонажа (лицо):",
+        "👤 Шаг 1: Пришлите фотографию персонажа (лицо):",
         reply_markup=cancel_kb()
     )
     await state.set_state(PhotoProcess.waiting_for_photo)
@@ -162,7 +178,7 @@ async def on_photo(message: types.Message, state: FSMContext, album: Optional[Li
 
     if model == "kling_motion":
         await message.answer(
-            "💃 **Шаг 2:** Теперь пришлите **видео с движением**, которое нужно повторить:",
+            "💃 Шаг 2: Теперь пришлите видео с движением, которое нужно повторить:",
             reply_markup=cancel_kb()
         )
         await state.set_state(PhotoProcess.waiting_for_motion_video)
@@ -180,10 +196,9 @@ async def on_motion_video(message: types.Message, state: FSMContext):
     await state.set_state(PhotoProcess.waiting_for_prompt)
 
 
-# ✅ FIX: обработка невалидного ввода вместо видео
 @router.message(PhotoProcess.waiting_for_motion_video)
 async def on_motion_video_invalid(message: types.Message, state: FSMContext):
-    await message.answer("⚠️ Пожалуйста, отправьте именно **видео**, а не фото или текст.", reply_markup=cancel_kb())
+    await message.answer("⚠️ Пожалуйста, отправьте именно видео, а не фото или текст.", reply_markup=cancel_kb())
 
 
 # --- ФИНАЛЬНЫЙ ХЕНДЛЕР (ПРОМПТ И ЗАПУСК) ---
@@ -196,19 +211,25 @@ async def on_prompt(message: types.Message, state: FSMContext):
 
     if not await has_balance(user_id, model):
         await state.clear()
-        return await message.answer("❌ Недостаточн�� средств.", reply_markup=main_kb())
+        return await message.answer("❌ Недостаточно средств.", reply_markup=main_kb())
 
     if model == "kling_motion":
         motion_video_id = data.get("motion_video_id")
         task = asyncio.create_task(background_motion_gen(
             global_bot, message.chat.id, photo_ids[0], motion_video_id, message.text, user_id
         ))
-    else:
-        func = background_video_gen if "kling" in model.lower() else background_photo_gen
+        time_msg = "⏳ Магия началась! Генерация Motion Control занимает 7-12 минут. Пожалуйста, подождите."
+    elif "kling" in model.lower():
+        func = background_video_gen
         task = asyncio.create_task(func(message.chat.id, photo_ids, message.text, model, user_id))
+        duration = "5 сек" if model == "kling_5" else "10 сек"
+        time_msg = f"⏳ Магия началась! Генерация видео ({duration}) занимает 3-5 минут."
+    else:
+        task = asyncio.create_task(background_photo_gen(message.chat.id, photo_ids, message.text, model, user_id))
+        time_msg = "⏳ Магия началась! Генерация фото занимает 1-2 минуты."
 
     active_tasks.add(task)
     task.add_done_callback(active_tasks.discard)
 
-    await message.answer("⏳ Магия началась! Подождите 1-3 минуты.", reply_markup=main_kb())
+    await message.answer(time_msg, reply_markup=main_kb())
     await state.clear()

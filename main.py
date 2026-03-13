@@ -1,228 +1,181 @@
-import logging
-import traceback
 import asyncio
+import aiohttp
 import os
-import subprocess
-from app.services.telegram_file import download_telegram_file
-from app.network import process_motion_control
-from app.services.generation import charge
+import logging
+import ssl
+from aiohttp import web, ClientTimeout
+from aiogram import types
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.exceptions import TelegramNetworkError
+
+# Импорты из твоего проекта
+from app.bot import dp, bot
+from app.routers import setup_routers
+from app.routers.payments import prodamus_webhook
+import database as db
+from app.routers.album_middleware import AlbumMiddleware
+
+# --- КОНФИГУРАЦИЯ ---
+TOKEN = os.getenv("BOT_TOKEN")
+WEBHOOK_HOST = '130.49.148.165'
+WEBHOOK_PORT = 8443
+WEBHOOK_PATH = f"/webhook/{TOKEN}"
+WEBHOOK_URL = f"https://{WEBHOOK_HOST}:{WEBHOOK_PORT}{WEBHOOK_PATH}"
+
+WEBHOOK_SSL_CERT = "/root/botchattelegram/certs/cert.pem"
+WEBHOOK_SSL_PRIV = "/root/botchattelegram/certs/private.key"
 
 
-async def compress_video(video_bytes: bytes, user_id: int, quality: str = "medium") -> bytes:
+# --- МЕХАНИЗМ ПОВТОРОВ (RETRY) ---
+async def retry_middleware(handler, bot, method):
     """
-    Сжимает видео используя ffmpeg.
+    Если отправка сообщения сорвалась из-за сети, пробуем еще раз.
+    Специальная обработка для больших видео.
     """
-
-    quality_presets = {
-        "low": {"crf": 32, "preset": "fast"},
-        "medium": {"crf": 28, "preset": "medium"},
-        "high": {"crf": 23, "preset": "slow"}
-    }
-
-    params = quality_presets.get(quality, quality_presets["medium"])
-
-    input_file = f"/tmp/motion_input_{user_id}.mp4"
-    output_file = f"/tmp/motion_output_{user_id}.mp4"
-
-    try:
-        with open(input_file, 'wb') as f:
-            f.write(video_bytes)
-
-        original_size_mb = len(video_bytes) / (1024 * 1024)
-        logging.info(f"📹 Исходное видео: {original_size_mb:.1f} MB. Сжимаем ({quality})...")
-
-        cmd = [
-            'ffmpeg',
-            '-i', input_file,
-            '-c:v', 'libx264',
-            '-crf', str(params['crf']),
-            '-preset', params['preset'],
-            '-c:a', 'aac',
-            '-b:a', '128k',
-            '-y',
-            output_file
-        ]
-
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL
-        )
-
-        await asyncio.wait_for(process.wait(), timeout=300)
-
-        with open(output_file, 'rb') as f:
-            compressed_bytes = f.read()
-
-        compressed_size_mb = len(compressed_bytes) / (1024 * 1024)
-        ratio = (1 - len(compressed_bytes) / len(video_bytes)) * 100
-
-        logging.info(f"✅ Видео сжато: {compressed_size_mb:.1f} MB (экономия {ratio:.1f}%)")
-
-        return compressed_bytes
-
-    except FileNotFoundError:
-        logging.warning(f"⚠️ ffmpeg не установлен, отправляем оригинальное видео")
-        return video_bytes
-    except Exception as e:
-        logging.error(f"❌ Ошибка сжатия видео: {e}")
-        return video_bytes
-    finally:
-        for f in [input_file, output_file]:
-            try:
-                os.remove(f)
-            except:
-                pass
-
-
-async def save_video_to_telegram(video_bytes: bytes, user_id: int) -> str:
-    """
-    Сохраняет видео в Telegram через бота и возвращает file_id.
-    Это позволит позже отправлять видео мгновенно без повторной загрузки.
-    """
-    from app.bot import bot
-    from io import BytesIO
-
-    try:
-        logging.info(f"💾 Загрузка видео в Telegram (кэширование)...")
-
-        video_file = BytesIO(video_bytes)
-        video_file.name = f"motion_{user_id}.mp4"
-
-        # Загружаем видео в приватный канал (или в чат с собой)
-        # Используем временный чат для кэширования
-        temp_message = await bot.send_video(
-            chat_id=user_id,  # Отправляем самому пользователю в привате
-            video=video_file,
-            caption="🎬 Motion Control (кэшировано)",
-        )
-
-        file_id = temp_message.video.file_id
-        logging.info(f"✅ Видео закэшировано в Telegram. File ID: {file_id[:20]}...")
-
-        return file_id
-
-    except Exception as e:
-        logging.error(f"❌ Ошибка кэширования видео: {e}")
-        return None
-
-
-async def background_motion_gen(bot, chat_id: int, char_photo_id: str, motion_video_id: str,
-                                prompt: str, user_id: int, mode: str = "720p",
-                                character_orientation: str = "image", cost_model: str = "kling_motion_720p"):
-    """
-    Фоновая задача для Motion Control.
-    """
-    try:
-        logging.info(f"🎭 [MOTION TASK] Старт. Юзер: {user_id}, Mode: {mode}, Orientation: {character_orientation}")
-
-        if not char_photo_id or not motion_video_id:
-            logging.error(f"❌ Отсутствует файл")
-            await bot.send_message(chat_id, "⚠️ Не удалось получить фото или видео. Попробуйте заново.")
-            return
-
-        # Получаем информацию о файлах
+    for attempt in range(1, 4):  # 3 попытки
         try:
-            photo_file = await bot.get_file(char_photo_id)
-            video_file = await bot.get_file(motion_video_id)
-        except Exception as e:
-            logging.error(f"❌ Ошибка получения информации о файлах: {e}")
-            await bot.send_message(chat_id, "⚠️ Не удалось получить информацию о файлах.")
-            return
-
-        bot_token = os.getenv("BOT_TOKEN")
-        if not bot_token:
-            logging.error("❌ BOT_TOKEN не найден")
-            await bot.send_message(chat_id, "⚠️ Ошибка конфигурации бота.")
-            return
-
-        char_url = f"https://api.telegram.org/file/bot{bot_token}/{photo_file.file_path}"
-        motion_url = f"https://api.telegram.org/file/bot{bot_token}/{video_file.file_path}"
-
-        logging.info(f"🔗 URLs готовы для API")
-
-        # Отправляем в Motion Control API
-        logging.info(f"📤 Отправка в Kling v2.6...")
-        result_bytes, ext, result_url = await process_motion_control(
-            prompt,
-            char_url,
-            motion_url,
-            mode=mode,
-            character_orientation=character_orientation
-        )
-
-        if not result_bytes:
-            logging.error("❌ API вернуло пустой результат")
-            await bot.send_message(chat_id, "❌ Не удалось создать видео.")
-            return
-
-        video_size_mb = len(result_bytes) / (1024 * 1024)
-        logging.info(f"✅ Видео получено: {video_size_mb:.1f} MB")
-
-        # Сжимаем видео если оно больше 5 MB
-        if video_size_mb > 5:
-            logging.info(f"📹 Сжимаем видео...")
-            result_bytes = await compress_video(result_bytes, user_id, quality="medium")
-            video_size_mb = len(result_bytes) / (1024 * 1024)
-            logging.info(f"📹 После сжатия: {video_size_mb:.1f} MB")
-
-        # КРИТИЧЕСКИ ВАЖНО: Кэшируем видео в Telegram
-        logging.info(f"💾 Кэшируем видео в Telegram...")
-        file_id = await save_video_to_telegram(result_bytes, user_id)
-
-        if not file_id:
-            logging.error("❌ Не удалось кэшировать видео")
-            await bot.send_message(chat_id, "❌ Ошибка при сохранении видео.")
-            return
-
-        # Теперь отправляем видео по file_id (МГНОВЕННО!)
-        max_retries = 3
-        retry_delay = 5
-
-        for attempt in range(1, max_retries + 1):
-            try:
-                logging.info(f"📤 Отправка видео по file_id (попытка {attempt}/{max_retries})...")
-
-                # Отправляем ПО FILE_ID - это мгновенно!
-                message = await bot.send_video(
-                    chat_id=chat_id,
-                    video=file_id,
-                    caption="🎭 Motion Control готов!\nВаше фото ожило по видео-референсу.",
-                )
-
-                logging.info(f"✅ Видео успешно отправлено! Message ID: {message.message_id}")
-
-                # Списываем баланс только после успешной отправки
+            # Для отправки видео используем больший таймаут
+            if hasattr(method, 'video') or 'sendVideo' in str(type(method)):
+                # Специальный таймаут для видео (10 минут)
+                timeout = ClientTimeout(total=600, connect=30, sock_read=120, sock_connect=30)
+                old_timeout = bot.session.timeout
+                bot.session.timeout = timeout
                 try:
-                    await charge(user_id, cost_model)
-                    logging.info(f"✅ [MOTION SUCCESS] Баланс списан")
-                except Exception as e:
-                    logging.error(f"❌ Ошибка при списании баланса: {e}")
-                    await bot.send_message(chat_id, f"⚠️ Видео отправлено, но ошибка при списании баланса")
+                    result = await handler(bot, method)
+                    return result
+                finally:
+                    bot.session.timeout = old_timeout
+            else:
+                # Обычный таймаут для остального (5 минут)
+                return await handler(bot, method)
 
-                return
+        except TelegramNetworkError as e:
+            if attempt < 3:
+                wait_time = 10 * attempt  # 10, 20, 30 сек
+                logging.warning(f"⚠️ Сетевая ошибка Telegram (попытка {attempt}/3): {e}. Ждем {wait_time} сек...")
+                await asyncio.sleep(wait_time)
+            else:
+                logging.error(f"❌ Сетевая ошибка после 3 попыток: {e}")
+                raise
 
-            except Exception as e:
-                error_msg = str(e).lower()
-                logging.error(f"❌ Ошибка отправки (попытка {attempt}): {e}")
+        except asyncio.TimeoutError:
+            if attempt < 3:
+                wait_time = 10 * attempt
+                logging.warning(f"⚠️ Таймаут (попытка {attempt}/3). Ждем {wait_time} сек...")
+                await asyncio.sleep(wait_time)
+            else:
+                logging.error(f"❌ Таймаут после 3 попыток")
+                raise
 
-                if "invalid" in error_msg or "forbidden" in error_msg or "not found" in error_msg:
-                    logging.error(f"��� Критическая ошибка, прекращаем попытки")
-                    await bot.send_message(chat_id, f"❌ Ошибка: видео не может быть отправлено")
-                    return
+        except Exception as e:
+            logging.error(f"❌ Неожиданная ошибка: {e}")
+            raise
 
-                if attempt == max_retries:
-                    logging.error(f"❌ Не удалось отправить видео после {max_retries} попыток")
-                    await bot.send_message(chat_id, f"❌ Не удалось отправить видео. Попробуйте позже.")
-                    return
+    # Финальная попытка
+    return await handler(bot, method)
 
-                logging.info(f"⏳ Ожидание {retry_delay} сек...")
-                await asyncio.sleep(retry_delay)
 
+async def on_startup(bot):
+    logging.info("⚙️ Настройка вебхука...")
+    try:
+        with open(WEBHOOK_SSL_CERT, 'rb') as cert_file:
+            await bot.set_webhook(
+                url=WEBHOOK_URL,
+                certificate=types.BufferedInputFile(cert_file.read(), filename="cert.pem"),
+                drop_pending_updates=True,
+                allowed_updates=dp.resolve_used_update_types()
+            )
+        logging.info(f"🚀 Вебхук успешно установлен: {WEBHOOK_URL}")
     except Exception as e:
-        logging.error(f"❌ [MOTION CRITICAL ERROR]: {e}")
-        logging.error(traceback.format_exc())
-        try:
-            await bot.send_message(chat_id, f"⚠️ Критическая ошибка: {str(e)[:100]}")
-        except:
-            logging.error("❌ Не удалось отправить сообщение об ошибке")
+        logging.error(f"❌ Ошибка при установке вебхука: {e}")
+
+
+async def main():
+    # Настройка логирования
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s"
+    )
+
+    # 1. Инициализация базы данных
+    await db.init_db()
+
+    # 2. РЕГИСТРАЦИЯ MIDDLEWARE
+    dp.message.middleware(AlbumMiddleware(latency=0.6))
+    logging.info("✅ AlbumMiddleware зарегистрирован")
+
+    # 3. Подключение роутеров
+    setup_routers(dp)
+    dp.startup.register(on_startup)
+
+    # 4. Настройка сессии бота (для больших видео)
+    # Увеличиваем sock_read до 300 (5 минут) для больших файлов
+    # total=600 (10 минут) — общий таймаут
+    timeout = ClientTimeout(
+        total=600,  # 10 минут общий таймаут
+        connect=30,  # 30 сек на подключение
+        sock_read=300,  # 5 минут на чтение
+        sock_connect=30  # 30 сек на подключение сокета
+    )
+    session = AiohttpSession(timeout=timeout)
+
+    # Коннектор без SSL проверки (для самоподписанных сертификатов)
+    session._connector = aiohttp.TCPConnector(ssl=False)
+
+    # Регистрируем retry middleware
+    session.middleware(retry_middleware)
+    bot.session = session
+
+    logging.info(f"✅ Сессия бота настроена: таймаут {timeout.total}s, sock_read {timeout.sock_read}s")
+
+    # 5. Настройка веб-приложения aiohttp
+    app = web.Application()
+
+    # Маршрут для платежей Prodamus
+    app.router.add_post("/payments/prodamus", prodamus_webhook)
+
+    # ОБРАБОТЧИК ВЕБХУКОВ
+    # reply_into_webhook=False — ответы отправляются отдельными запросами (критично для больших видео)
+    # handle_as_tasks=True — обработка обновлений в фоновых задачах
+    webhook_requests_handler = SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot,
+        handle_as_tasks=True,
+        reply_into_webhook=False  # КРИТИЧНО! Отправляет видео отдельным запросом
+    )
+    webhook_requests_handler.register(app, path=WEBHOOK_PATH)
+
+    setup_application(app, dp, bot=bot)
+
+    # 6. Настройка SSL контекста для HTTPS сервера
+    context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    context.load_cert_chain(WEBHOOK_SSL_CERT, WEBHOOK_SSL_PRIV)
+
+    # 7. Запуск сервера
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", WEBHOOK_PORT, ssl_context=context)
+
+    try:
+        await site.start()
+        logging.info(f"📡 Сервер активен на порту: {WEBHOOK_PORT}")
+        logging.info(f"🌐 Webhook URL: {WEBHOOK_URL}")
+        logging.info("✅ Бот готов к работе!")
+        await asyncio.Event().wait()
+    except Exception as e:
+        logging.error(f"❌ Критическая ошибка сервера: {e}")
+    finally:
+        # Корректное завершение
+        if bot.session:
+            await bot.session.close()
+        await runner.cleanup()
+        await db.close_db()
+        logging.info("🛑 Бот остановлен")
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("🛑 Принудительная остановка")

@@ -41,11 +41,30 @@ def kling_inline() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🎬 Kling 10 сек — 10 ⚡", callback_data="model_kling_10")
         ],
         [
-            # Новая кнопка для Motion Control
-            InlineKeyboardButton(text="🎭 Motion Control (Лицо + Видео) — 10 ⚡", callback_data="model_kling_motion")
+            InlineKeyboardButton(text="🎭 Motion Control — 5/10 ⚡", callback_data="model_kling_motion")
         ],
         [
             InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
+        ]
+    ])
+
+# --- Motion Control: Выбор режима качества ---
+def motion_control_mode_inline() -> InlineKeyboardMarkup:
+    """Выбор режима качества для Motion Control"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🎬 720p (5 ⚡)", callback_data="motion_mode_720p"),
+            InlineKeyboardButton(text="🎬 1080p (10 ⚡)", callback_data="motion_mode_1080p"),
+        ]
+    ])
+
+# --- Motion Control: Выбор ориентации персонажа ---
+def motion_control_orientation_inline() -> InlineKeyboardMarkup:
+    """Выбор ориентации персонажа для Motion Control"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📷 По изображению (макс 10с)", callback_data="motion_orient_image"),
+            InlineKeyboardButton(text="🎥 По видео (макс 30с)", callback_data="motion_orient_video"),
         ]
     ])
 

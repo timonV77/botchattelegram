@@ -6,9 +6,19 @@ from app.services.generation import charge
 from app.network import upload_to_telegraph
 
 
-async def background_motion_gen(bot, chat_id: int, char_photo_id: str, motion_video_id: str, prompt: str, user_id: int):
+async def background_motion_gen(bot, chat_id: int, char_photo_id: str, motion_video_id: str,
+                                prompt: str, user_id: int, mode: str = "720p",
+                                character_orientation: str = "image", cost_model: str = "kling_motion_720p"):
+    """
+    Фоновая задача для Motion Control.
+
+    Args:
+        mode: "720p" (5 ⚡) или "1080p" (10 ⚡)
+        character_orientation: "image" (макс 10с) или "video" (макс 30с)
+        cost_model: модель для зарядки ("kling_motion_720p" или "kling_motion_1080p")
+    """
     try:
-        logging.info(f"🎭 [MOTION TASK] Старт. Юзер: {user_id}")
+        logging.info(f"🎭 [MOTION TASK] Старт. Юзер: {user_id}, Mode: {mode}, Orientation: {character_orientation}")
 
         if not char_photo_id or not motion_video_id:
             logging.error(f"❌ Отсутствует файл. Фото: {char_photo_id}, Видео: {motion_video_id}")
@@ -37,7 +47,13 @@ async def background_motion_gen(bot, chat_id: int, char_photo_id: str, motion_vi
         logging.info(f"  📷 Фото: {char_url[:80]}...")
         logging.info(f"  🎥 Видео: base64 ({len(video_bytes)} байт)")
 
-        result_bytes, ext, result_url = await process_motion_control(prompt, char_url, motion_url)
+        result_bytes, ext, result_url = await process_motion_control(
+            prompt,
+            char_url,
+            motion_url,
+            mode=mode,
+            character_orientation=character_orientation
+        )
 
         if not result_bytes:
             logging.error("❌ API вернуло пустой результат")
@@ -53,7 +69,7 @@ async def background_motion_gen(bot, chat_id: int, char_photo_id: str, motion_vi
             caption="🎭 Motion Control готов!\nВаше фото ожило по видео-референсу.",
         )
 
-        await charge(user_id, "kling_motion")
+        await charge(user_id, cost_model)
         logging.info(f"✅ [MOTION SUCCESS] Видео отправлено пользователю {user_id}")
 
     except Exception as e:

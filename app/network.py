@@ -229,40 +229,67 @@ async def process_video_polza(prompt: str, model_type: str, image_url: str = Non
 
 # ================= MOTION CONTROL (Kling v2.6) =================
 
-async def process_motion_control(prompt: str, character_image_url: str, motion_video_url: str) -> Tuple[
+async def process_motion_control(prompt: str, character_image_url: str, motion_video_url: str,
+                                 mode: str = "720p", character_orientation: str = "image") -> Tuple[
     Optional[bytes], Optional[str], Optional[str]]:
+    """
+    Kling 2.6 Motion Control — перенос движения из видео на персонажа с изображения.
+
+    Args:
+        prompt: Описание (макс 2500 символов, опциональный)
+        character_image_url: URL или base64 изображения персонажа (обязательно)
+        motion_video_url: URL или base64 видео с движением (обязательно)
+        mode: "720p" или "1080p" (по умолчанию "720p")
+        character_orientation: "image" (макс 10с) или "video" (макс 30с)
+
+    Returns:
+        Tuple[bytes, ext, url]
+    """
     if not POLZA_API_KEY:
         logging.error("❌ POLZA_API_KEY отсутствует")
         return None, None, None
+
+    # Валидация параметров
+    if mode not in ["720p", "1080p"]:
+        logging.error(f"❌ Неверный mode: {mode}. Используются: 720p, 1080p")
+        mode = "720p"
+
+    if character_orientation not in ["image", "video"]:
+        logging.error(f"❌ Неверный character_orientation: {character_orientation}")
+        character_orientation = "image"
 
     headers = {
         "Authorization": f"Bearer {POLZA_API_KEY}",
         "Content-Type": "application/json"
     }
 
+    # Обработка промпта
+    final_prompt = ""
+    if prompt and prompt.strip() not in (".", ""):
+        final_prompt = prompt.strip()[:2500]  # Макс 2500 символов
+
+    # Простая структура согласно документации
     payload = {
         "model": "kling/v2.6-motion-control",
         "input": {
-            "prompt": prompt.strip() if prompt and prompt != "." else "Natural movement",
-            "images": [
-                {"type": "base64", "data": character_image_url} if character_image_url.startswith("data:") else {
-                    "type": "url", "data": character_image_url}
-            ],
-            "videos": [
-                {"type": "base64", "data": motion_video_url} if motion_video_url.startswith("data:") else {
-                    "type": "url", "data": motion_video_url}
-            ],
-            "mode": "720p",
-            "character_orientation": "image"
+            "images": [character_image_url],  # Массив с 1 изображением
+            "videos": [motion_video_url],  # Массив с 1 видео
+            "mode": mode,
+            "character_orientation": character_orientation
         },
         "async": True
     }
+
+    # Добавляем промпт только если он есть
+    if final_prompt:
+        payload["input"]["prompt"] = final_prompt
+
     MAX_ATTEMPTS = 80
     POLL_INTERVAL = 12
 
     async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as session:
         try:
-            logging.info("📤 [MOTION CONTROL] Отправка в Kling v2.6...")
+            logging.info(f"📤 [MOTION CONTROL] Kling v2.6 | Mode: {mode} | Orientation: {character_orientation}")
             async with session.post(f"{BASE_URL}/media", headers=headers, json=payload) as response:
                 res_text = await response.text()
 
@@ -289,7 +316,7 @@ async def process_motion_control(prompt: str, character_image_url: str, motion_v
                     result = await resp.json()
                     status = str(result.get("status", "")).lower()
 
-                    logging.info(f"📡 Motion [{status}] (попытка {attempt}) | RAW: {result}")
+                    logging.info(f"📡 Motion [{status}] (попытка {attempt})")
 
                     if status in ("success", "completed"):
                         url = None

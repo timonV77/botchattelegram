@@ -192,44 +192,65 @@ async def on_photo(message: types.Message, state: FSMContext, album: Optional[Li
 @router.message(PhotoProcess.waiting_for_motion_video, F.video)
 async def on_motion_video(message: types.Message, state: FSMContext):
     await state.update_data(motion_video_id=message.video.file_id)
-    await message.answer("✍️ Опишите детали промптом (или '.'):", reply_markup=cancel_kb())
+
+    await message.answer(
+        "🎬 Выберите режим качества:",
+        reply_markup=motion_control_mode_inline()
+    )
+    await state.set_state(PhotoProcess.waiting_for_motion_mode)
+
+
+@router.callback_query(F.data.startswith("motion_mode_"))
+async def on_motion_mode(callback: types.CallbackQuery, state: FSMContext):
+    mode = callback.data.replace("motion_mode_", "")
+    cost = "5 ⚡" if mode == "720p" else "10 ⚡"
+
+    await state.update_data(motion_mode=mode)
+    await callback.message.edit_text(f"✅ Режим: {mode} ({cost})")
+
+    await callback.message.answer(
+        "👥 Выберите ориентацию персонажа:",
+        reply_markup=motion_control_orientation_inline()
+    )
+    await state.set_state(PhotoProcess.waiting_for_motion_orientation)
+
+
+@router.callback_query(F.data.startswith("motion_orient_"))
+async def on_motion_orientation(callback: types.CallbackQuery, state: FSMContext):
+    orientation = callback.data.replace("motion_orient_", "")
+    max_duration = "10 сек" if orientation == "image" else "30 сек"
+
+    await state.update_data(motion_orientation=orientation)
+    await callback.message.edit_text(f"✅ Ориентация: {orientation} (макс {max_duration})")
+
+    await callback.message.answer(
+        "✍️ Опишите детали промптом (или '.'):",
+        reply_markup=cancel_kb()
+    )
     await state.set_state(PhotoProcess.waiting_for_prompt)
 
 
-@router.message(PhotoProcess.waiting_for_motion_video)
-async def on_motion_video_invalid(message: types.Message, state: FSMContext):
-    await message.answer("⚠️ Пожалуйста, отправьте именно видео, а не фото или текст.", reply_markup=cancel_kb())
+# В финальном хендлере on_prompt обновить:
+if model == "kling_motion":
+    motion_video_id = data.get("motion_video_id")
+    motion_mode = data.get("motion_mode", "720p")
+    motion_orientation = data.get("motion_orientation", "image")
 
+    # Определяем стоимость
+    motion_cost = "kling_motion_720p" if motion_mode == "720p" else "kling_motion_1080p"
 
-# --- ФИНАЛЬНЫЙ ХЕНДЛЕР (ПРОМПТ И ЗАПУСК) ---
-@router.message(PhotoProcess.waiting_for_prompt)
-async def on_prompt(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    model = data.get("chosen_model", "nanabanana")
-    photo_ids = data.get("photo_ids", [])
-    user_id = message.from_user.id
-
-    if not await has_balance(user_id, model):
+    if not await has_balance(user_id, motion_cost):
         await state.clear()
-        return await message.answer("❌ Недостаточно средств.", reply_markup=main_kb())
+        cost_text = "5 ⚡" if motion_mode == "720p" else "10 ⚡"
+        return await message.answer(f"❌ Недостаточно средств ({cost_text})", reply_markup=main_kb())
 
-    if model == "kling_motion":
-        motion_video_id = data.get("motion_video_id")
-        task = asyncio.create_task(background_motion_gen(
-            global_bot, message.chat.id, photo_ids[0], motion_video_id, message.text, user_id
-        ))
-        time_msg = "⏳ Магия началась! Генерация Motion Control занимает 7-12 минут. Пожалуйста, подождите."
-    elif "kling" in model.lower():
-        func = background_video_gen
-        task = asyncio.create_task(func(message.chat.id, photo_ids, message.text, model, user_id))
-        duration = "5 сек" if model == "kling_5" else "10 сек"
-        time_msg = f"⏳ Магия началась! Генерация видео ({duration}) занимает 3-5 минут."
-    else:
-        task = asyncio.create_task(background_photo_gen(message.chat.id, photo_ids, message.text, model, user_id))
-        time_msg = "⏳ Магия началась! Генерация фото занимает 1-2 минуты."
-
-    active_tasks.add(task)
-    task.add_done_callback(active_tasks.discard)
-
-    await message.answer(time_msg, reply_markup=main_kb())
-    await state.clear()
+    task = asyncio.create_task(background_motion_gen(
+        global_bot, message.chat.id, photo_ids[0], motion_video_id,
+        message.text, user_id,
+        mode=motion_mode,
+        character_orientation=motion_orientation,
+        cost_model=motion_cost
+    ))
+    max_duration = "10 сек" if motion_orientation == "image" else "30 сек"
+    cost_text = "5 ⚡" if motion_mode == "720p" else "10 ⚡"
+    time_msg = f"⏳ Магия началась! Motion Control ({motion_mode}, {cost_text}, макс {max_duration}) занимает 7-12 минут."

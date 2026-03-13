@@ -40,12 +40,16 @@ async def background_motion_gen(bot, chat_id: int, char_photo_id: str, motion_vi
             char_url = bytes_to_base64_data_uri(photo_bytes, photo_mime)
             logging.warning("⚠️ Telegraph недоступен, используем base64 для фото")
 
-        # Видео — base64 (Telegraph не поддерживает видео)
-        motion_url = bytes_to_base64_data_uri(video_bytes, video_mime)
+        # Видео — заливаем на Telegraph (публичный URL)
+        motion_url = await upload_to_telegraph(video_bytes)
+        if not motion_url:
+            # Fallback — base64
+            motion_url = bytes_to_base64_data_uri(video_bytes, video_mime)
+            logging.warning("⚠️ Telegraph недоступен для видео, используем base64")
 
         logging.info(f"🔗 Ссылки готовы. Отправка в Kling v2.6...")
         logging.info(f"  📷 Фото: {char_url[:80]}...")
-        logging.info(f"  🎥 Видео: base64 ({len(video_bytes)} байт)")
+        logging.info(f"  🎥 Видео: {motion_url[:80]}...")
 
         result_bytes, ext, result_url = await process_motion_control(
             prompt,

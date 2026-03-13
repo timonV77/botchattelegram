@@ -1,8 +1,9 @@
 import logging
 import traceback
 import asyncio
-from app.services.telegram_file import download_telegram_file, bytes_to_base64_data_uri, get_file_size_from_telegram
-from app.network import process_motion_control, upload_file_to_host
+import os
+from app.services.telegram_file import download_telegram_file, bytes_to_base64_data_uri
+from app.network import process_motion_control
 from app.services.generation import charge
 
 
@@ -11,6 +12,7 @@ async def background_motion_gen(bot, chat_id: int, char_photo_id: str, motion_vi
                                 character_orientation: str = "image", cost_model: str = "kling_motion_720p"):
     """
     Фоновая задача для Motion Control.
+    Использует прямые URL из Telegram вместо загрузки на сторонние хостинги.
     """
     try:
         logging.info(f"🎭 [MOTION TASK] Старт. Юзер: {user_id}, Mode: {mode}, Orientation: {character_orientation}")
@@ -20,36 +22,31 @@ async def background_motion_gen(bot, chat_id: int, char_photo_id: str, motion_vi
             await bot.send_message(chat_id, "⚠️ Не удалось получить фото или видео. Попробуйте заново.")
             return
 
-        # Скачиваем фото и видео из Telegram
-        logging.info(f"📥 Скачивание фото...")
-        photo_bytes, photo_mime = await download_telegram_file(bot, char_photo_id)
-
-        logging.info(f"📥 Скачивание видео (может занять время)...")
-        video_bytes, video_mime = await download_telegram_file(bot, motion_video_id)
-
-        if not photo_bytes or not video_bytes:
-            await bot.send_message(chat_id, "❌ Не удалось скачать фото или видео из Telegram. Попробуйте ещё раз.")
+        # Получаем информацию о файлах
+        try:
+            photo_file = await bot.get_file(char_photo_id)
+            video_file = await bot.get_file(motion_video_id)
+        except Exception as e:
+            logging.error(f"❌ Ошиб��а получения информации о файлах: {e}")
+            await bot.send_message(chat_id, "⚠️ Не удалось получить информацию о файлах. Попробуйте заново.")
             return
 
-        # Загружаем фото на Telegraph
-        logging.info(f"📷 Загрузка ��ото...")
-        char_url = await upload_file_to_host(photo_bytes, filename="character.jpg")
-        if not char_url:
-            char_url = bytes_to_base64_data_uri(photo_bytes, photo_mime)
-            logging.warning("⚠️ Telegraph недоступен для фото, используем base64")
-
-        # Загружаем видео на Telegraph
-        logging.info(f"🎥 Загрузка видео...")
-        motion_url = await upload_file_to_host(video_bytes, filename="motion.mp4")
-        if not motion_url:
-            logging.error("❌ Не удалось загрузить видео на Telegraph")
-            await bot.send_message(chat_id, "❌ Ошибка загрузки видео. Попробуйте позже или используйте видео поменьше.")
+        # Формируем прямые URL из Telegram
+        bot_token = os.getenv("BOT_TOKEN")
+        if not bot_token:
+            logging.error("❌ BOT_TOKEN не найден")
+            await bot.send_message(chat_id, "⚠️ Ошибка конфигурации бота.")
             return
 
-        logging.info(f"🔗 Ссылки готовы. Отправка в Kling v2.6...")
+        char_url = f"https://api.telegram.org/file/bot{bot_token}/{photo_file.file_path}"
+        motion_url = f"https://api.telegram.org/file/bot{bot_token}/{video_file.file_path}"
+
+        logging.info(f"🔗 Получены прямые URL из Telegram:")
         logging.info(f"  📷 Фото: {char_url[:80]}...")
         logging.info(f"  🎥 Видео: {motion_url[:80]}...")
 
+        # Отправляем в Motion Control API
+        logging.info(f"📤 Отправка в Kling v2.6 Motion Control...")
         result_bytes, ext, result_url = await process_motion_control(
             prompt,
             char_url,
@@ -64,11 +61,11 @@ async def background_motion_gen(bot, chat_id: int, char_photo_id: str, motion_vi
             return
 
         from aiogram.types import BufferedInputFile
-        video_file = BufferedInputFile(result_bytes, filename=f"motion_{user_id}.mp4")
+        video_file_output = BufferedInputFile(result_bytes, filename=f"motion_{user_id}.mp4")
 
         await bot.send_video(
             chat_id=chat_id,
-            video=video_file,
+            video=video_file_output,
             caption="🎭 Motion Control готов!\nВаше фото ожило по видео-референсу.",
         )
 

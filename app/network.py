@@ -75,47 +75,51 @@ async def upload_to_telegraph(image_bytes: bytes) -> Optional[str]:
 
 async def upload_file_to_host(file_bytes: bytes, filename: str = None) -> Optional[str]:
     """
-    Загрузка файла на 0x0.st хостинг.
-    Поддерживает файлы до 512 MB.
-
-    Args:
-        file_bytes: Байты файла
-        filename: Имя файла (например, "motion.mp4" или "character.jpg")
-
-    Returns:
-        URL загруженного файла или None
+    Загрузка файла на Telegraph (работает для фото и видео).
+    Telegraph поддерживает файлы до ~50 MB.
     """
 
     file_size_mb = len(file_bytes) / (1024 * 1024)
 
     try:
-        logging.info(f"📤 Загрузка на 0x0.st ({file_size_mb:.1f} MB)...")
+        logging.info(f"📤 Загрузка на Telegraph ({file_size_mb:.1f} MB)...")
 
         form = aiohttp.FormData()
-        form.add_field('file', file_bytes, filename=filename or 'file.bin')
+        # Определяем тип контента
+        if filename and filename.endswith('.mp4'):
+            content_type = 'video/mp4'
+        elif filename and filename.endswith(('.jpg', '.jpeg')):
+            content_type = 'image/jpeg'
+        else:
+            content_type = 'application/octet-stream'
 
-        async with aiohttp.ClientSession(connector=get_connector(),
-                                         timeout=aiohttp.ClientTimeout(total=300)) as session:
-            async with session.post('https://0x0.st', data=form) as resp:
+        form.add_field('file', file_bytes, filename=filename or 'file.bin', content_type=content_type)
+
+        # Более длительный таймаут для Telegraph
+        timeout = aiohttp.ClientTimeout(total=300, connect=30, sock_read=120)
+
+        async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout) as session:
+            async with session.post('https://telegra.ph/upload', data=form) as resp:
                 if resp.status == 200:
-                    url = (await resp.text()).strip()
-                    if url.startswith('http'):
-                        logging.info(f"✅ 0x0.st успешно: {url}")
-                        return url
+                    data = await resp.json()
+                    if isinstance(data, list) and len(data) > 0:
+                        path = data[0].get('src')
+                        full_url = f"https://telegra.ph{path}"
+                        logging.info(f"✅ Telegraph успешно: {full_url}")
+                        return full_url
                     else:
-                        logging.error(f"❌ 0x0.st вернул некорректный ответ: {url}")
+                        logging.error(f"❌ Telegraph вернул странный ответ: {data}")
                 else:
                     error_text = await resp.text()
-                    logging.error(f"❌ 0x0.st ошибка [{resp.status}]: {error_text}")
+                    logging.error(f"❌ Telegraph ошибка [{resp.status}]: {error_text[:100]}")
 
     except asyncio.TimeoutError:
-        logging.error(f"⏰ Таймаут при загрузке на 0x0.st ({file_size_mb:.1f} MB)")
+        logging.error(f"⏰ Таймаут при загрузке на Telegraph ({file_size_mb:.1f} MB)")
     except Exception as e:
-        logging.error(f"❌ Ошибка 0x0.st: {e}")
+        logging.error(f"❌ Ошибка Telegraph: {e}")
         logging.error(traceback.format_exc())
 
     return None
-
 
 # ================= IMAGE GENERATION =================
 

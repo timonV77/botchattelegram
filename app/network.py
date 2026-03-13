@@ -73,6 +73,50 @@ async def upload_to_telegraph(image_bytes: bytes) -> Optional[str]:
     return None
 
 
+async def upload_file_to_host(file_bytes: bytes, filename: str = None) -> Optional[str]:
+    """
+    Загрузка файла на 0x0.st хостинг.
+    Поддерживает файлы до 512 MB.
+
+    Args:
+        file_bytes: Байты файла
+        filename: Имя файла (например, "motion.mp4" или "character.jpg")
+
+    Returns:
+        URL загруженного файла или None
+    """
+
+    file_size_mb = len(file_bytes) / (1024 * 1024)
+
+    try:
+        logging.info(f"📤 Загрузка на 0x0.st ({file_size_mb:.1f} MB)...")
+
+        form = aiohttp.FormData()
+        form.add_field('file', file_bytes, filename=filename or 'file.bin')
+
+        async with aiohttp.ClientSession(connector=get_connector(),
+                                         timeout=aiohttp.ClientTimeout(total=300)) as session:
+            async with session.post('https://0x0.st', data=form) as resp:
+                if resp.status == 200:
+                    url = (await resp.text()).strip()
+                    if url.startswith('http'):
+                        logging.info(f"✅ 0x0.st успешно: {url}")
+                        return url
+                    else:
+                        logging.error(f"❌ 0x0.st вернул некорректный ответ: {url}")
+                else:
+                    error_text = await resp.text()
+                    logging.error(f"❌ 0x0.st ошибка [{resp.status}]: {error_text}")
+
+    except asyncio.TimeoutError:
+        logging.error(f"⏰ Таймаут при загрузке на 0x0.st ({file_size_mb:.1f} MB)")
+    except Exception as e:
+        logging.error(f"❌ Ошибка 0x0.st: {e}")
+        logging.error(traceback.format_exc())
+
+    return None
+
+
 # ================= IMAGE GENERATION =================
 
 async def process_with_polza(prompt: str, model_type: str, image_urls: List[str] = None) -> Tuple[
@@ -87,7 +131,7 @@ async def process_with_polza(prompt: str, model_type: str, image_urls: List[str]
     headers = {"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"}
 
     input_data = {
-                "prompt": (prompt or "").strip(),
+        "prompt": (prompt or "").strip(),
         "aspect_ratio": "1:1",
         "quality": "basic"
     }

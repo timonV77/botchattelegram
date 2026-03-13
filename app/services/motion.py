@@ -1,9 +1,8 @@
 import logging
 import traceback
 from app.services.telegram_file import download_telegram_file, bytes_to_base64_data_uri, get_telegram_photo_url
-from app.network import process_motion_control
+from app.network import process_motion_control, upload_file_to_host
 from app.services.generation import charge
-from app.network import upload_to_telegraph
 
 
 async def background_motion_gen(bot, chat_id: int, char_photo_id: str, motion_video_id: str,
@@ -33,19 +32,20 @@ async def background_motion_gen(bot, chat_id: int, char_photo_id: str, motion_vi
             await bot.send_message(chat_id, "❌ Не удалось скачать фото или видео из Telegram. Попробуйте ещё раз.")
             return
 
-        # Фото — заливаем на Telegraph (публичный URL)
-        char_url = await upload_to_telegraph(photo_bytes)
+        # Загружаем фото на 0x0.st
+        logging.info(f"📷 Загрузка фото ({len(photo_bytes) / 1024:.1f} KB)...")
+        char_url = await upload_file_to_host(photo_bytes, filename="character.jpg")
         if not char_url:
-            # Fallback — base64
             char_url = bytes_to_base64_data_uri(photo_bytes, photo_mime)
-            logging.warning("⚠️ Telegraph недоступен, используем base64 для фото")
+            logging.warning("⚠️ 0x0.st недоступен для фото, используем base64")
 
-        # Видео — заливаем на Telegraph (публичный URL)
-        motion_url = await upload_to_telegraph(video_bytes)
+        # Загружаем видео на 0x0.st
+        logging.info(f"🎥 Загрузка видео ({len(video_bytes) / (1024 * 1024):.1f} MB)...")
+        motion_url = await upload_file_to_host(video_bytes, filename="motion.mp4")
         if not motion_url:
-            # Fallback — base64
-            motion_url = bytes_to_base64_data_uri(video_bytes, video_mime)
-            logging.warning("⚠️ Telegraph недоступен для видео, используем base64")
+            logging.error("❌ Не удалось загрузить видео на 0x0.st")
+            await bot.send_message(chat_id, "❌ Ошибка загрузки видео. Попробуйте видео поменьше или позже.")
+            return
 
         logging.info(f"🔗 Ссылки готовы. Отправка в Kling v2.6...")
         logging.info(f"  📷 Фото: {char_url[:80]}...")

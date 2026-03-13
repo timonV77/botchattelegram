@@ -11,7 +11,8 @@ from aiogram.types import BufferedInputFile
 
 from app.states import PhotoProcess
 from app.keyboards.reply import main_kb, cancel_kb
-from app.keyboards.inline import model_inline, kling_inline
+from app.keyboards.inline import model_inline, kling_inline, motion_control_mode_inline, \
+    motion_control_orientation_inline
 from app.services.telegram_file import get_telegram_photo_url
 from app.services.generation import has_balance, generate, charge, generate_video
 
@@ -137,7 +138,8 @@ async def cancel_text(message: types.Message, state: FSMContext):
 @router.message(F.text == "📸 Начать фотосессию")
 async def start_photo(message: types.Message, state: FSMContext):
     balance = await db.get_balance(message.from_user.id)
-    if balance < 1: return await message.answer("❌ Недостаточно генераций.")
+    if balance < 1:
+        return await message.answer("❌ Недостаточно генераций.")
     await state.clear()
     await message.answer("🤖 Выберите нейросеть для фото:", reply_markup=model_inline())
     await state.set_state(PhotoProcess.waiting_for_model)
@@ -200,6 +202,12 @@ async def on_motion_video(message: types.Message, state: FSMContext):
     await state.set_state(PhotoProcess.waiting_for_motion_mode)
 
 
+@router.message(PhotoProcess.waiting_for_motion_video)
+async def on_motion_video_invalid(message: types.Message, state: FSMContext):
+    await message.answer("⚠️ Пожалуйста, отправьте именно видео, а не фото или текст.", reply_markup=cancel_kb())
+
+
+# --- ХЕНДЛЕР ВЫБОРА РЕЖИМА КАЧЕСТВА ---
 @router.callback_query(F.data.startswith("motion_mode_"))
 async def on_motion_mode(callback: types.CallbackQuery, state: FSMContext):
     mode = callback.data.replace("motion_mode_", "")
@@ -215,6 +223,7 @@ async def on_motion_mode(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(PhotoProcess.waiting_for_motion_orientation)
 
 
+# --- ХЕНДЛЕР ВЫБОРА ОРИЕНТАЦИИ ---
 @router.callback_query(F.data.startswith("motion_orient_"))
 async def on_motion_orientation(callback: types.CallbackQuery, state: FSMContext):
     orientation = callback.data.replace("motion_orient_", "")
@@ -230,27 +239,53 @@ async def on_motion_orientation(callback: types.CallbackQuery, state: FSMContext
     await state.set_state(PhotoProcess.waiting_for_prompt)
 
 
-# В финальном хендлере on_prompt обновить:
-if model == "kling_motion":
-    motion_video_id = data.get("motion_video_id")
-    motion_mode = data.get("motion_mode", "720p")
-    motion_orientation = data.get("motion_orientation", "image")
+# --- ФИНАЛЬНЫЙ ХЕНДЛЕР (ПРОМПТ И ЗАПУСК) ---
+@router.message(PhotoProcess.waiting_for_prompt)
+async def on_prompt(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    model = data.get("chosen_model", "nanabanana")
+    photo_ids = data.get("photo_ids", [])
+    user_id = message.from_user.id
 
-    # Определяем стоимость
-    motion_cost = "kling_motion_720p" if motion_mode == "720p" else "kling_motion_1080p"
-
-    if not await has_balance(user_id, motion_cost):
+    if not await has_balance(user_id, model):
         await state.clear()
-        cost_text = "5 ⚡" if motion_mode == "720p" else "10 ⚡"
-        return await message.answer(f"❌ Недостаточно средств ({cost_text})", reply_markup=main_kb())
+        return await message.answer("❌ Недостаточно средств.", reply_markup=main_kb())
 
-    task = asyncio.create_task(background_motion_gen(
-        global_bot, message.chat.id, photo_ids[0], motion_video_id,
-        message.text, user_id,
-        mode=motion_mode,
-        character_orientation=motion_orientation,
-        cost_model=motion_cost
-    ))
-    max_duration = "10 сек" if motion_orientation == "image" else "30 сек"
-    cost_text = "5 ⚡" if motion_mode == "720p" else "10 ⚡"
-    time_msg = f"⏳ Магия началась! Motion Control ({motion_mode}, {cost_text}, макс {max_duration}) занимает 7-12 минут."
+    if model == "kling_motion":
+        motion_video_id = data.get("motion_video_id")
+        motion_mode = data.get("motion_mode", "720p")
+        motion_orientation = data.get("motion_orientation", "image")
+
+        # Определяем стоимость
+        motion_cost = "kling_motion_720p" if motion_mode == "720p" else "kling_motion_1080p"
+
+        if not await has_balance(user_id, motion_cost):
+            await state.clear()
+            cost_text = "5 ⚡" if motion_mode == "720p" else "10 ⚡"
+            return await message.answer(f"❌ Недостаточно средств ({cost_text})", reply_markup=main_kb())
+
+        task = asyncio.create_task(background_motion_gen(
+            global_bot, message.chat.id, photo_ids[0], motion_video_id,
+            message.text, user_id,
+            mode=motion_mode,
+            character_orientation=motion_orientation,
+            cost_model=motion_cost
+        ))
+        max_duration = "10 сек" if motion_orientation == "image" else "30 сек"
+        cost_text = "5 ⚡" if motion_mode == "720p" else "10 ⚡"
+        time_msg = f"⏳ Магия началась! Motion Control ({motion_mode}, {cost_text}, макс {max_duration}) занимает 7-12 минут."
+
+    elif "kling" in model.lower():
+        task = asyncio.create_task(background_video_gen(message.chat.id, photo_ids, message.text, model, user_id))
+        duration = "5 сек" if model == "kling_5" else "10 сек"
+        time_msg = f"⏳ Магия началась! Генерация видео ({duration}) занимает 3-5 минут."
+
+    else:
+        task = asyncio.create_task(background_photo_gen(message.chat.id, photo_ids, message.text, model, user_id))
+        time_msg = "⏳ Магия началась! Генерация фото занимает 1-2 минуты."
+
+    active_tasks.add(task)
+    task.add_done_callback(active_tasks.discard)
+
+    await message.answer(time_msg, reply_markup=main_kb())
+    await state.clear()

@@ -4,6 +4,7 @@ import os
 import logging
 import ssl
 import socket
+from aiohttp import ThreadedResolver
 from aiohttp import web, ClientTimeout
 from aiogram import types
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
@@ -122,8 +123,8 @@ async def main():
 
     # --- НОВЫЙ БЛОК: Настройка SSL и IPv4 ---
     custom_ssl_context = ssl.create_default_context()
+    custom_ssl_context.set_ciphers('DEFAULT@SECLEVEL=1')  # Снижаем требования к шифрам
     custom_ssl_context.maximum_version = ssl.TLSVersion.TLSv1_2
-    custom_ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
     custom_ssl_context.check_hostname = False
     custom_ssl_context.verify_mode = ssl.CERT_NONE
 
@@ -132,11 +133,12 @@ async def main():
     # Настраиваем коннектор с TLS 1.2 И только IPv4
     session._connector = aiohttp.TCPConnector(
         ssl=custom_ssl_context,
-        family=socket.AF_INET,  # Принудительно IPv4
+        family=socket.AF_INET,
+        resolver=aiohttp.ThreadedResolver(),  # Используем отдельный поток для DNS
         limit_per_host=10,
-        limit=100
-    )
-    # ---------------------------------------
+        limit=100,
+        use_dns_cache=False  # Отключаем кэш, чтобы проверить чистый запрос
+    )--------------------------------
 
     # Регистрируем retry middleware
     session.middleware(retry_middleware)

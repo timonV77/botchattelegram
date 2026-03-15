@@ -138,7 +138,7 @@ async def main():
         limit_per_host=10,
         limit=100,
         use_dns_cache=False  # Отключаем кэш, чтобы проверить чистый запрос
-    )--------------------------------
+    )
 
     # Регистрируем retry middleware
     session.middleware(retry_middleware)

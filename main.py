@@ -51,7 +51,9 @@ async def main():
     # 3. Упрощенная сессия (без лишних сложностей, которые могут вешать старт)
     # Используем стандартный коннектор, но с отключенным SSL-верификатором
     connector = aiohttp.TCPConnector(ssl=False, family=socket.AF_INET)
-    session = AiohttpSession(connector=connector)
+    session = AiohttpSession(proxy=None)  # Можно оставить пустым
+    session._connector = connector  # Либо настраиваем внутренний атрибут напрямую
+
     bot.session = session
     logging.info("✅ Сессия создана (SSL OFF)")
 

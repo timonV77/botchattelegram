@@ -103,28 +103,36 @@ async def main():
     setup_routers(dp)
     dp.startup.register(on_startup)
 
-    # 4. Настройка сессии бота (для больших видео)
-    # Специальные таймауты для надежной работы с видео
+    # 4. Настройка сессии бота (Исправлено для TLS 1.2)
     timeout = ClientTimeout(
-        total=600,  # 10 минут общий таймаут
-        connect=30,  # 30 сек на подключение
-        sock_read=300,  # 5 минут на чтение
-        sock_connect=30  # 30 сек на подключение сокета
+        total=600,
+        connect=30,
+        sock_read=300,
+        sock_connect=30
     )
+
+    # --- НОВЫЙ БЛОК ДЛЯ TLS 1.2 ---
+    custom_ssl_context = ssl.create_default_context()
+    # Принудительно устанавливаем TLS 1.2 (так как 1.3 у тебя виснет)
+    custom_ssl_context.maximum_version = ssl.TLSVersion.TLSv1_2
+    custom_ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+    # Если сертификаты самоподписанные или нужно игнорировать проверку (как было у тебя ssl=False):
+    custom_ssl_context.check_hostname = False
+    custom_ssl_context.verify_mode = ssl.CERT_NONE
+    # ------------------------------
 
     session = AiohttpSession(timeout=timeout)
 
-    # Коннектор без SSL проверки (для самоподписанных сертификатов)
+    # Настраиваем коннектор с нашим SSL контекстом
     session._connector = aiohttp.TCPConnector(
-        ssl=False,
-        limit_per_host=10,  # Макс 10 одновременных соединений на хост
-        limit=100  # Макс 100 соединений всего
+        ssl=custom_ssl_context,  # Используем наш кастомный контекст вместо False
+        limit_per_host=10,
+        limit=100
     )
 
     # Регистрируем retry middleware
     session.middleware(retry_middleware)
     bot.session = session
-
     logging.info(f"✅ Сессия бота настроена: таймаут {timeout.total}s, sock_read {timeout.sock_read}s")
 
     # 5. Настройка веб-приложения aiohttp

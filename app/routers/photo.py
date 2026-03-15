@@ -97,3 +97,8 @@ async def background_photo_gen(bot: Bot, chat_id: int, photo_ids: List[str], pro
             current_state,
             message.content_type,
         )
+
+@router.callback_query()
+async def debug_any_callback(callback: types.CallbackQuery):
+    logging.info("DEBUG callback data=%r from_user=%s", callback.data, callback.from_user.id)
+    await callback.answer()

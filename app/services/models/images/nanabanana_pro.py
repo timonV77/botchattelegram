@@ -13,10 +13,12 @@ def _as_dict(payload):
 
 
 def _extract_b64(data_uri: str) -> str:
-    # data:image/png;base64,XXXX -> XXXX
+    """
+    data:image/png;base64,XXXX -> XXXX
+    """
     if "," in data_uri:
-        return data_uri.split(",", 1)[1]
-    return data_uri
+        return data_uri.split(",", 1)[1].strip()
+    return data_uri.strip()
 
 
 class NanoBananaPro:
@@ -25,14 +27,20 @@ class NanoBananaPro:
         self.model_id = "google/gemini-3-pro-image-preview" if is_pro else "google/gemini-2.5-flash-image"
         self.headers = {
             "Authorization": f"Bearer {POLZA_API_KEY}",
-            "Content-Type": "application/json",
+            "Content-Type": "application/json"
         }
 
-    async def generate(self, prompt: str, image_urls: list = None, resolution: str = "1K", aspect_ratio: str = "1:1"):
+    async def generate(
+        self,
+        prompt: str,
+        image_urls: list = None,
+        resolution: str = "1K",
+        aspect_ratio: str = "1:1"
+    ):
         payload_input = {
             "prompt": prompt,
             "aspect_ratio": aspect_ratio if self.is_pro or aspect_ratio != "auto" else "1:1",
-            "output_format": "png",
+            "output_format": "png"
         }
 
         if self.is_pro:
@@ -41,29 +49,42 @@ class NanoBananaPro:
                 payload_input["aspect_ratio"] = "auto"
 
         if image_urls:
+            logging.info(
+                "NanoBananaPro first image sample: %r",
+                image_urls[0][:80] if isinstance(image_urls[0], str) else image_urls[0]
+            )
+
             payload_input["images"] = []
             for src in image_urls[:8]:
                 if not isinstance(src, str):
                     continue
 
-                if src.startswith("data:image/"):
-                    # отправляем чистый base64
+                s = src.strip()
+                s_low = s.lower()
+
+                # Поддержка любого data:*;base64,...
+                if s_low.startswith("data:") and "base64," in s_low:
                     payload_input["images"].append({
                         "type": "base64",
-                        "data": _extract_b64(src)
+                        "data": _extract_b64(s)
                     })
-                elif src.startswith("http://") or src.startswith("https://"):
+                elif s_low.startswith("http://") or s_low.startswith("https://"):
                     payload_input["images"].append({
                         "type": "url",
-                        "data": src
+                        "data": s
                     })
+                else:
+                    logging.warning(
+                        "NanoBananaPro: skipped unknown image src prefix: %r",
+                        s[:60]
+                    )
 
         logging.info("NanoBananaPro images_count=%s", len(payload_input.get("images", [])))
 
         payload = {
             "model": self.model_id,
             "input": payload_input,
-            "async": True,
+            "async": True
         }
 
         async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as session:

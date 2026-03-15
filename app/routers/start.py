@@ -90,21 +90,22 @@ async def cancel_handler(message: types.Message, state: FSMContext):
         reply_markup=main_kb()
     )
 
-    @router.message(F.text == "💰 Мой баланс")
-    async def balance_handler(message: types.Message):
-        """Обработка кнопки баланса из главного меню."""
-        user_id = message.from_user.id
-        try:
-            balance = await db.get_balance(user_id)
-            await message.answer(
-                f"👤 <b>Ваш профиль</b>\n\n"
-                f"🆔 ID: <code>{user_id}</code>\n"
-                f"⚡ Доступно генераций: <b>{balance}</b>\n\n"
-                f"🔗 Ваша реферальная ссылка:\n"
-                f"<code>https://t.me/neuro_photo3_bot?start={user_id}</code>\n\n"
-                f"<i>Приглашайте друзей и получайте 10% от их пополнений!</i>",
-                parse_mode="HTML"
-            )
-        except Exception as e:
-            logging.error(f"❌ Ошибка при проверке баланса: {e}")
-            await message.answer("⚠️ Не удалось получить данные о балансе.")
+
+@router.message(F.text == "💰 Мой баланс")
+async def balance_handler(message: types.Message):
+    """Обработка кнопки баланса из главного меню."""
+    user_id = message.from_user.id
+    try:
+        balance = await db.get_balance(user_id)
+        await message.answer(
+            f"👤 <b>Ваш профиль</b>\n\n"
+            f"🆔 ID: <code>{user_id}</code>\n"
+            f"⚡ Доступно генераций: <b>{balance}</b>\n\n"
+            f"🔗 Ваша реферальная ссылка:\n"
+            f"<code>https://t.me/neuro_photo3_bot?start={user_id}</code>\n\n"
+            f"<i>Приглашайте друзей и получайте 10% от их пополнений!</i>",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logging.error(f"❌ Ошибка при проверке баланса: {e}")
+        await message.answer("⚠️ Не удалось получить данные о балансе.")

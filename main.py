@@ -134,10 +134,10 @@ async def main():
     session._connector = aiohttp.TCPConnector(
         ssl=custom_ssl_context,
         family=socket.AF_INET,
-        resolver=aiohttp.ThreadedResolver(),  # Используем отдельный поток для DNS
-        limit_per_host=10,
-        limit=100,
-        use_dns_cache=False  # Отключаем кэш, чтобы проверить чистый запрос
+        resolver=aiohttp.ThreadedResolver(),
+        ttl_dns_cache=300,  # Кэшировать DNS на 5 минут
+        limit_per_host=20,
+        limit=100
     )
 
     # Регистрируем retry middleware

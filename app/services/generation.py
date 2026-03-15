@@ -69,6 +69,9 @@ async def generate(
 # ================================
 # 🔥 ГЕНЕРАЦИЯ ВИДЕО (Диспетчер)
 # ================================
+# ================================
+# 🔥 ГЕНЕРАЦИЯ ВИДЕО (Диспетчер)
+# ================================
 async def generate_video(
     image_url: str,
     prompt: str,
@@ -86,7 +89,8 @@ async def generate_video(
             return await engine.generate(prompt, image_url, motion_video_url)
 
         elif model in ("kling_5", "kling_10"):
-            duration = 5 if model == "kling_5" else 10
+            # ✅ Сразу задаём как строки "5" или "10"
+            duration = "5" if model == "kling_5" else "10"
             engine = KlingStandard()
             img_list = [image_url] if image_url else None
             return await engine.generate(prompt, image_urls=img_list, duration=duration)

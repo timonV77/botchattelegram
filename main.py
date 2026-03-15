@@ -37,23 +37,17 @@ async def retry_middleware(handler, bot, method):
         try:
             # Для отправки видео используем больший таймаут
             if hasattr(method, 'video') or 'sendVideo' in str(type(method)):
-                # Специальный таймаут для видео (10 минут)
-                timeout = ClientTimeout(total=600, connect=30, sock_read=120, sock_connect=30)
-                old_timeout = bot.session.timeout
-                bot.session.timeout = timeout
-                try:
-                    result = await handler(bot, method)
-                    return result
-                finally:
-                    bot.session.timeout = old_timeout
+                logging.info(f"📹 Обнаружена отправка видео (попытка {attempt}/3)")
+                # Пропускаем middleware для видео - пусть обрабатывается с дефолтными таймаутами
+                return await handler(bot, method)
             else:
-                # Обычный таймаут для остального (5 минут)
+                # Обычные запросы
                 return await handler(bot, method)
 
         except TelegramNetworkError as e:
             if attempt < 3:
                 wait_time = 10 * attempt  # 10, 20, 30 сек
-                logging.warning(f"⚠️ Сетевая ошибка Telegram (попытка {attempt}/3): {e}. Ждем {wait_time} сек...")
+                logging.warning(f"⚠️ Сетевая ошибка (попытка {attempt}/3): {str(e)[:80]}. Ждем {wait_time} сек...")
                 await asyncio.sleep(wait_time)
             else:
                 logging.error(f"❌ Сетевая ошибка после 3 попыток: {e}")
@@ -69,10 +63,10 @@ async def retry_middleware(handler, bot, method):
                 raise
 
         except Exception as e:
-            logging.error(f"❌ Неожиданная ошибка: {e}")
+            # Не retry для других ошибок
+            logging.error(f"❌ Ошибка: {e}")
             raise
 
-    # Финальная попытка
     return await handler(bot, method)
 
 
@@ -110,18 +104,22 @@ async def main():
     dp.startup.register(on_startup)
 
     # 4. Настройка сессии бота (для больших видео)
-    # Увеличиваем sock_read до 300 (5 минут) для больших файлов
-    # total=600 (10 минут) — общий таймаут
+    # Специальные таймауты для надежной работы с видео
     timeout = ClientTimeout(
         total=600,  # 10 минут общий таймаут
         connect=30,  # 30 сек на подключение
         sock_read=300,  # 5 минут на чтение
         sock_connect=30  # 30 сек на подключение сокета
     )
+
     session = AiohttpSession(timeout=timeout)
 
     # Коннектор без SSL проверки (для самоподписанных сертификатов)
-    session._connector = aiohttp.TCPConnector(ssl=False)
+    session._connector = aiohttp.TCPConnector(
+        ssl=False,
+        limit_per_host=10,  # Макс 10 одновременных соединений на хост
+        limit=100  # Макс 100 соединений всего
+    )
 
     # Регистрируем retry middleware
     session.middleware(retry_middleware)
@@ -130,19 +128,21 @@ async def main():
     logging.info(f"✅ Сессия бота настроена: таймаут {timeout.total}s, sock_read {timeout.sock_read}s")
 
     # 5. Настройка веб-приложения aiohttp
-    app = web.Application()
+    app = web.Application(
+        client_max_size=100 * 1024 * 1024,  # 100 MB макс размер входящего запроса
+    )
 
     # Маршрут для платежей Prodamus
     app.router.add_post("/payments/prodamus", prodamus_webhook)
 
     # ОБРАБОТЧИК ВЕБХУКОВ
-    # reply_into_webhook=False — ответы отправляются отдельными запросами (критично для больших видео)
-    # handle_as_tasks=True — обработка обновлений в фоновых задачах
+    # reply_into_webhook=False — ответы отправляются отдельными запросами
+    # handle_as_tasks=True — обработка обно��лений в фоновых задачах (КРИТИЧНО!)
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
-        handle_as_tasks=True,
-        reply_into_webhook=False  # КРИТИЧНО! Отправляет видео отдельным запросом
+        handle_as_tasks=True,  # КРИТИЧНО! Обработка в фоне
+        reply_into_webhook=False  # КРИТИЧНО! Отдельные запросы для видео
     )
     webhook_requests_handler.register(app, path=WEBHOOK_PATH)
 

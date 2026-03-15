@@ -114,8 +114,7 @@ class KlingStandard:
                                 return None, None, None
 
                             # Скачиваем результат
-                            vid_bytes = await _download_content_bytes(session, final_url)
-                            return vid_bytes, "mp4", None
+                            return await _download_content_bytes(session, final_url)
 
                         if status in ("failed", "error", "cancelled"):
                             logging.error(f"❌ Kling Failed: {res.get('error')} | raw={raw_res}")

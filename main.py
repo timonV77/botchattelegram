@@ -74,17 +74,17 @@ async def retry_middleware(handler, bot, method):
 
 async def on_startup(bot):
     logging.info("⚙️ Настройка вебхука...")
-    try:
-        with open(WEBHOOK_SSL_CERT, 'rb') as cert_file:
-            await bot.set_webhook(
-                url=WEBHOOK_URL,
-                certificate=types.BufferedInputFile(cert_file.read(), filename="cert.pem"),
-                drop_pending_updates=True,
-                allowed_updates=dp.resolve_used_update_types()
-            )
-        logging.info(f"🚀 Вебхук успешно установлен: {WEBHOOK_URL}")
-    except Exception as e:
-        logging.error(f"❌ Ошибка при установке вебхука: {e}")
+    # try:
+    #     with open(WEBHOOK_SSL_CERT, 'rb') as cert_file:
+    #         await bot.set_webhook(
+    #             url=WEBHOOK_URL,
+    #             certificate=types.BufferedInputFile(cert_file.read(), filename="cert.pem"),
+    #             drop_pending_updates=True,
+    #             allowed_updates=dp.resolve_used_update_types()
+    #         )
+    #     logging.info(f"🚀 Вебхук успешно установлен: {WEBHOOK_URL}")
+    # except Exception as e:
+    #     logging.error(f"❌ Ошибка при установке вебхука: {e}")
 
 
 async def main():

@@ -2,10 +2,9 @@ import asyncio
 import os
 import logging
 from aiohttp import web
-from aiogram import Router, types, F
+from aiogram import Router, types, F, Bot
 from urllib.parse import urlencode
 
-from app.bot import bot
 from app.keyboards.reply import main_kb
 import database as db
 
@@ -13,10 +12,12 @@ router = Router()
 PRODAMUS_BASE_URL = os.getenv("PRODAMUS_URL", "https://ai-photo-nano.payform.ru")
 
 
-# Вспомогательная функция для "красивого" зачисления в фоне
-async def process_delivery_animation(user_id, amount, bonus_text):
+# --- ФОНОВЫЕ ЗАДАЧИ ---
+
+async def process_delivery_animation(bot: Bot, user_id: int, amount: int, bonus_text: str):
+    """Анимация зачисления, запущенная в фоне"""
     try:
-        # Показываем анимацию, но это уже не тормозит основной сервер
+        # Используем переданный объект bot вместо глобального
         status_msg = await bot.send_message(
             chat_id=user_id,
             text="⏳ <b>Платеж получен! Начинаем зачисление...</b>\n<code>▒▒▒▒▒▒▒▒▒▒ 0%</code>",
@@ -44,10 +45,19 @@ async def process_delivery_animation(user_id, amount, bonus_text):
             parse_mode="HTML"
         )
     except Exception as e:
-        logging.error(f"Ошибка анимации для {user_id}: {e}")
+        logging.error(f"❌ Ошибка анимации для {user_id}: {e}")
 
 
-async def prodamus_webhook(request):
+# --- ВЕБХУК (ДЛЯ PRODAMUS) ---
+
+async def prodamus_webhook(request: web.Request):
+    """Обработчик уведомлений от платежной системы"""
+    # Извлекаем бота из приложения (мы положили его туда в main.py через app['bot'] = bot)
+    bot: Bot = request.app.get('bot')
+    if not bot:
+        logging.error("❌ Объект Bot не найден в request.app!")
+        return web.Response(text="Internal Error", status=500)
+
     data = await request.post()
     raw_dict = dict(data)
 
@@ -60,32 +70,34 @@ async def prodamus_webhook(request):
             user_id = int(p[0])
             amount = int(p[1])
 
-            # МГНОВЕННОЕ зачисление в базу
+            # 1. МГНОВЕННОЕ зачисление в базу
             await db.update_balance(user_id, amount)
             await db.log_payment(user_id, amount, "success", str(order_data), raw_dict)
 
-            # Рефералка (тоже быстро)
+            # 2. Логика реферальной системы
             referrer_id = await db.get_referrer(user_id)
             bonus_text = ""
             if referrer_id:
                 bonus_amount = max(1, int(amount * 0.1))
                 await db.update_balance(referrer_id, bonus_amount)
                 bonus_text = f"\n🎁 Ваш пригласитель получил бонус <b>{bonus_amount}</b> ⚡"
-                # Уведомление рефереру отправляем не дожидаясь ответа
+
+                # Уведомление рефереру (в фоне)
                 asyncio.create_task(bot.send_message(chat_id=referrer_id, text="🎉 Бонус за друга!"))
 
-            # ГЛАВНОЕ: Запускаем анимацию "в фоне" и СРАЗУ отвечаем Продамусу
-            asyncio.create_task(process_delivery_animation(user_id, amount, bonus_text))
+            # 3. Запускаем анимацию "в фоне" и СРАЗУ отвечаем серверу платежей (200 OK)
+            asyncio.create_task(process_delivery_animation(bot, user_id, amount, bonus_text))
 
             return web.Response(text="OK", status=200)
         except Exception as e:
-            logging.error(f"❌ Ошибка вебхука: {e}")
+            logging.error(f"❌ Ошибка обработки платежа: {e}")
             return web.Response(text="Error", status=500)
 
     return web.Response(text="Ignored", status=200)
 
 
-# --- Остальной код (меню тарифов) оставляем как есть ---
+# --- ХЕНДЛЕРЫ МЕНЮ ---
+
 @router.message(F.text == "💳 Пополнить")
 async def show_deposit_menu(message: types.Message):
     kb = types.InlineKeyboardMarkup(inline_keyboard=[
@@ -95,6 +107,7 @@ async def show_deposit_menu(message: types.Message):
         [types.InlineKeyboardButton(text="⚡ 60 ген. — 900₽", callback_data="pay_60_900")],
     ])
     text = "⚡ <b>Выберите пакет генераций:</b>"
+
     if isinstance(message, types.CallbackQuery):
         await message.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     else:
@@ -105,14 +118,23 @@ async def show_deposit_menu(message: types.Message):
 async def create_payment_link(callback: types.CallbackQuery):
     _, amount, price = callback.data.split("_")
     user_id = callback.from_user.id
-    params = {"do": "pay", "order_id": f"{user_id}_{amount}", "products[0][name]": f"Пакет {amount}",
-              "products[0][price]": price, "products[0][quantity]": 1}
+
+    # Формируем ссылку для Продамуса
+    params = {
+        "do": "pay",
+        "order_id": f"{user_id}_{amount}",
+        "products[0][name]": f"Пакет {amount} молний",
+        "products[0][price]": price,
+        "products[0][quantity]": 1
+    }
     payment_url = f"{PRODAMUS_BASE_URL}/?{urlencode(params)}"
+
     pay_kb = types.InlineKeyboardMarkup(inline_keyboard=[
         [types.InlineKeyboardButton(text="💳 Перейти к оплате", url=payment_url)],
         [types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_tariffs")]
     ])
-    await callback.message.edit_text(f"💰 К оплате: {price}₽", reply_markup=pay_kb, parse_mode="HTML")
+
+    await callback.message.edit_text(f"💰 К оплате: <b>{price}₽</b>", reply_markup=pay_kb, parse_mode="HTML")
     await callback.answer()
 
 

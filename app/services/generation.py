@@ -1,14 +1,12 @@
 import logging
 import traceback
-import asyncio
 from typing import Tuple, Optional, List
 
-# Импорты наших классов
 from app.services.models.images.nanabanana import NanoBanana
 from app.services.models.images.nanabanana_pro import NanoBananaPro
 from app.services.models.images.seedream import Seedream
 from app.services.models.video.kling_standard import KlingStandard
-from app.services.models.video.kling_motion import KlingMotionControl  # Исправили имя
+from app.services.models.video.kling_motion import KlingMotionControl
 
 import database as db
 
@@ -18,11 +16,10 @@ COSTS = {
     "seedream": 2,
     "kling_5": 5,
     "kling_10": 10,
-    "kling_motion": 15  # Motion Control обычно дороже
+    "kling_motion": 15
 }
 
 
-# --- Логика баланса остается без изменений ---
 async def has_balance(user_id: int, model_or_cost) -> bool:
     try:
         cost = COSTS.get(model_or_cost, model_or_cost) if isinstance(model_or_cost, str) else model_or_cost
@@ -40,39 +37,46 @@ async def charge(user_id: int, model_or_cost):
 # ================================
 # 🔥 ГЕНЕРАЦИЯ ФОТО (Диспетчер)
 # ================================
-async def generate(image_urls: List[str], prompt: str, model: str) -> Tuple[
-    Optional[bytes], Optional[str], Optional[str]]:
+async def generate(
+    image_urls: List[str],
+    prompt: str,
+    model: str
+) -> Tuple[Optional[bytes], Optional[str], Optional[str]]:
     try:
-        logging.info(f"--- 🛠 Выбор модели фото: {model} ---")
+        logging.info("--- 🛠 Выбор модели фото: %s ---", model)
 
         if model == "nanabanana":
             engine = NanoBanana()
-            # Nano Banana поддерживает референсы
             return await engine.generate(prompt, image_urls=image_urls)
 
         elif model == "nanabanana_pro":
             engine = NanoBananaPro()
-            return await engine.generate(prompt)
+            # ✅ КРИТИЧЕСКИЙ ФИКС: передаём референсы в PRO
+            return await engine.generate(prompt, image_urls=image_urls)
 
         elif model == "seedream":
             engine = Seedream()
-            # Seedream поддерживает до 14 референсов
             return await engine.generate(prompt, image_urls=image_urls)
 
         return None, None, None
 
     except Exception as e:
-        logging.error(f"❌ [GENERATE ERROR]: {e}")
+        logging.error("❌ [GENERATE ERROR]: %s", e)
+        logging.error("❌ [GENERATE TRACE]: %s", traceback.format_exc())
         return None, None, None
 
 
 # ================================
 # 🔥 ГЕНЕРАЦИЯ ВИДЕО (Диспетчер)
 # ================================
-async def generate_video(image_url: str, prompt: str, model: str = "kling_5", motion_video_url: str = None) -> Tuple[
-    Optional[bytes], Optional[str], Optional[str]]:
+async def generate_video(
+    image_url: str,
+    prompt: str,
+    model: str = "kling_5",
+    motion_video_url: str = None
+) -> Tuple[Optional[bytes], Optional[str], Optional[str]]:
     try:
-        logging.info(f"--- 🎬 Выбор видео-движка: {model} ---")
+        logging.info("--- 🎬 Выбор видео-движка: %s ---", model)
 
         if model == "kling_motion":
             if not image_url or not motion_video_url:
@@ -82,15 +86,13 @@ async def generate_video(image_url: str, prompt: str, model: str = "kling_5", mo
             return await engine.generate(prompt, image_url, motion_video_url)
 
         elif model in ("kling_5", "kling_10"):
-            # В KlingStandard длительность передается числом
             duration = 5 if model == "kling_5" else 10
             engine = KlingStandard()
-            # Передаем image_url как список для совместимости с логикой модели
             img_list = [image_url] if image_url else None
             return await engine.generate(prompt, image_urls=img_list, duration=duration)
 
         return None, None, None
 
-    except Exception as e:
-        logging.error(f"❌ [VIDEO ERROR]: {traceback.format_exc()}")
+    except Exception:
+        logging.error("❌ [VIDEO ERROR]: %s", traceback.format_exc())
         return None, None, None

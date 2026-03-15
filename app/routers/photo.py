@@ -87,3 +87,13 @@ async def background_photo_gen(bot: Bot, chat_id: int, photo_ids: List[str], pro
     except Exception as e:
         logging.error(f"❌ [PHOTO ERROR]: {e}")
         await bot.send_message(chat_id, "⚠️ Ошибка при создании фото.")
+
+    @router.message()
+    async def _photo_debug_all(message: types.Message, state: FSMContext):
+        current_state = await state.get_state()
+        logging.info(
+            "PHOTO DEBUG catch-all: text=%r, state=%r, content_type=%s",
+            message.text,
+            current_state,
+            message.content_type,
+        )

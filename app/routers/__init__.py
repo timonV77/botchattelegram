@@ -1,3 +1,4 @@
+import logging
 from aiogram import Dispatcher
 
 from .start import router as start_router
@@ -8,15 +9,10 @@ from .broadcast import router as broadcast_router
 
 
 def setup_routers(dp: Dispatcher):
-    # 1) Базовые команды
+    logging.info("SETUP_ROUTERS CALLED")
     dp.include_router(start_router)
-
-    # 2) Баланс/платежи
     dp.include_router(balance_router)
     dp.include_router(payments_router)
-
-    # 3) Основной пользовательский флоу
     dp.include_router(photo_router)
-
-    # 4) Последним — broadcast (чтобы не перехватывал всё)
     dp.include_router(broadcast_router)
+    logging.info("SETUP_ROUTERS DONE")

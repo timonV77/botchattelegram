@@ -3,6 +3,7 @@ import aiohttp
 import os
 import logging
 import ssl
+import socket
 from aiohttp import web, ClientTimeout
 from aiogram import types
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
@@ -111,24 +112,31 @@ async def main():
         sock_connect=30
     )
 
-    # --- НОВЫЙ БЛОК ДЛЯ TLS 1.2 ---
+    # 4. Настройка сессии бота (для больших видео)
+    timeout = ClientTimeout(
+        total=600,  # 10 минут общий таймаут
+        connect=30,  # 30 сек на подключение
+        sock_read=300,  # 5 минут на чтение
+        sock_connect=30  # 30 сек на подключение сокета
+    )
+
+    # --- НОВЫЙ БЛОК: Настройка SSL и IPv4 ---
     custom_ssl_context = ssl.create_default_context()
-    # Принудительно устанавливаем TLS 1.2 (так как 1.3 у тебя виснет)
     custom_ssl_context.maximum_version = ssl.TLSVersion.TLSv1_2
     custom_ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
-    # Если сертификаты самоподписанные или нужно игнорировать проверку (как было у тебя ssl=False):
     custom_ssl_context.check_hostname = False
     custom_ssl_context.verify_mode = ssl.CERT_NONE
-    # ------------------------------
 
     session = AiohttpSession(timeout=timeout)
 
-    # Настраиваем коннектор с нашим SSL контекстом
+    # Настраиваем коннектор с TLS 1.2 И только IPv4
     session._connector = aiohttp.TCPConnector(
-        ssl=custom_ssl_context,  # Используем наш кастомный контекст вместо False
+        ssl=custom_ssl_context,
+        family=socket.AF_INET,  # Принудительно IPv4
         limit_per_host=10,
         limit=100
     )
+    # ---------------------------------------
 
     # Регистрируем retry middleware
     session.middleware(retry_middleware)

@@ -4,7 +4,7 @@ import aiohttp
 from app.network import BASE_URL, POLZA_API_KEY, get_connector, timeout_config, _download_content_bytes
 
 
-class NanoBanana:
+class NanoBananaPro:
     def __init__(self, is_pro: bool = False):
         self.is_pro = is_pro
         # Используем актуальные ID из документации

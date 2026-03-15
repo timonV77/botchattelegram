@@ -34,7 +34,15 @@ class NanoBananaPro:
                 payload_input["aspect_ratio"] = "auto"
 
         if image_urls:
-            payload_input["images"] = [{"type": "url", "data": url} for url in image_urls[:8]]
+            payload_input["images"] = []
+            for src in image_urls[:8]:
+                # если это data:image/...;base64,...
+                if isinstance(src, str) and src.startswith("data:image/"):
+                    payload_input["images"].append({"type": "data_uri", "data": src})
+                else:
+                    payload_input["images"].append({"type": "url", "data": src})
+
+        logging.info("NanoBananaPro images_count=%s", len(payload_input.get("images", [])))
 
         payload = {
             "model": self.model_id,

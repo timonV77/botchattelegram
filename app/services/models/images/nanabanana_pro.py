@@ -12,20 +12,27 @@ def _as_dict(payload):
     return {}
 
 
+def _extract_b64(data_uri: str) -> str:
+    # data:image/png;base64,XXXX -> XXXX
+    if "," in data_uri:
+        return data_uri.split(",", 1)[1]
+    return data_uri
+
+
 class NanoBananaPro:
     def __init__(self, is_pro: bool = False):
         self.is_pro = is_pro
         self.model_id = "google/gemini-3-pro-image-preview" if is_pro else "google/gemini-2.5-flash-image"
         self.headers = {
             "Authorization": f"Bearer {POLZA_API_KEY}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
 
     async def generate(self, prompt: str, image_urls: list = None, resolution: str = "1K", aspect_ratio: str = "1:1"):
         payload_input = {
             "prompt": prompt,
             "aspect_ratio": aspect_ratio if self.is_pro or aspect_ratio != "auto" else "1:1",
-            "output_format": "png"
+            "output_format": "png",
         }
 
         if self.is_pro:
@@ -36,18 +43,27 @@ class NanoBananaPro:
         if image_urls:
             payload_input["images"] = []
             for src in image_urls[:8]:
-                # если это data:image/...;base64,...
-                if isinstance(src, str) and src.startswith("data:image/"):
-                    payload_input["images"].append({"type": "data_uri", "data": src})
-                else:
-                    payload_input["images"].append({"type": "url", "data": src})
+                if not isinstance(src, str):
+                    continue
+
+                if src.startswith("data:image/"):
+                    # отправляем чистый base64
+                    payload_input["images"].append({
+                        "type": "base64",
+                        "data": _extract_b64(src)
+                    })
+                elif src.startswith("http://") or src.startswith("https://"):
+                    payload_input["images"].append({
+                        "type": "url",
+                        "data": src
+                    })
 
         logging.info("NanoBananaPro images_count=%s", len(payload_input.get("images", [])))
 
         payload = {
             "model": self.model_id,
             "input": payload_input,
-            "async": True
+            "async": True,
         }
 
         async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as session:

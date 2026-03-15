@@ -31,19 +31,24 @@ MODEL_NAMES = {
 active_tasks = set()
 
 
-async def _build_image_sources(bot: Bot, file_ids: List[str]) -> List[str]:
+async def _build_image_sources(
+    bot: Bot,
+    file_ids: List[str],
+    force_data_uri: bool = False,
+) -> List[str]:
     """
     Для каждого file_id:
-    1) пытаемся получить URL,
-    2) если не вышло — скачиваем и конвертим в data URI.
+    - если force_data_uri=False: сначала пробуем URL, иначе data URI
+    - если force_data_uri=True: сразу data URI (без URL)
     """
     sources: List[str] = []
 
     for file_id in file_ids:
-        src = await get_telegram_photo_url(bot, file_id)
-        if src:
-            sources.append(src)
-            continue
+        if not force_data_uri:
+            src = await get_telegram_photo_url(bot, file_id)
+            if src:
+                sources.append(src)
+                continue
 
         file_bytes, mime = await download_telegram_file(bot, file_id)
         if file_bytes and mime and mime.startswith("image/"):
@@ -68,7 +73,9 @@ async def background_photo_gen(
     user_id: int,
 ):
     try:
-        photo_sources = await _build_image_sources(bot, photo_ids)
+        # Для PRO принудительно data URI, чтобы референс не терялся
+        force_data = model == "nanabanana_pro"
+        photo_sources = await _build_image_sources(bot, photo_ids, force_data_uri=force_data)
 
         if not photo_sources:
             await bot.send_message(chat_id, "⚠️ Не удалось подготовить фото-референс.")
@@ -210,6 +217,10 @@ async def on_prompt(message: types.Message, state: FSMContext):
     if not await has_balance(user_id, model):
         await state.clear()
         return await message.answer("❌ Недостаточно средств.", reply_markup=main_kb())
+
+    if not photo_ids:
+        await state.clear()
+        return await message.answer("⚠️ Фото не найдено. Начните заново.", reply_markup=main_kb())
 
     if model == "kling_motion":
         motion_id = data.get("motion_video_id")

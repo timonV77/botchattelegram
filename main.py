@@ -3,10 +3,10 @@ import os
 import logging
 import ssl
 
-from aiohttp import web
+from aiohttp import web, ClientSession  # Добавили ClientSession
 from aiogram.client.session.aiohttp import AiohttpSession
 
-# ВАЖНО: импортируем только dp и настройки, бота создадим внутри
+# Импортируем только dp и фабрику бота
 from app.bot import dp, create_bot
 from app.routers import setup_routers
 from app.routers.payments import prodamus_webhook
@@ -30,12 +30,13 @@ async def main():
     # 1. Инициализация базы данных
     await db.init_db()
 
-    # 2. Настройка сетевой сессии (ТЕПЕРЬ ВНУТРИ LOOP)
-    # Это решает ошибку "RuntimeError: no running event loop"
+    # 2. Настройка сетевой сессии (Решение ошибки TypeError и Event Loop)
     connector = get_connector()
-    session = AiohttpSession(connector=connector)
+    # В aiogram 3.x кастомный коннектор передается через aiohttp.ClientSession
+    client_session = ClientSession(connector=connector)
+    session = AiohttpSession(session=client_session)
 
-    # Инициализируем бота с привязкой к текущей сессии
+    # Инициализируем бота с привязкой к сессии
     bot = create_bot(session)
 
     # 3. Настройка роутеров и Middleware
@@ -45,6 +46,10 @@ async def main():
 
     # 4. Запуск сервера для Prodamus
     app = web.Application(client_max_size=100 * 1024 * 1024)
+
+    # ВАЖНО: сохраняем бота в контекст приложения, чтобы payments.py его видел
+    app['bot'] = bot
+
     app.router.add_post("/payments/prodamus", prodamus_webhook)
 
     runner = web.AppRunner(app)
@@ -64,6 +69,7 @@ async def main():
     # 5. СТАРТ БОТА
     logging.info("🚀 Запуск Polling...")
     try:
+        # Очистка старых обновлений
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot)
     except Exception as e:
@@ -71,8 +77,12 @@ async def main():
     finally:
         logging.info("♻️ Завершение работы: очистка ресурсов...")
         await runner.cleanup()
-        # Закрываем сессию при выходе
+
+        # Правильное закрытие сессий
         await session.close()
+        if not client_session.closed:
+            await client_session.close()
+
         await db.close_db()
         logging.info("🛑 Процесс завершен")
 

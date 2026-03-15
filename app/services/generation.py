@@ -1,8 +1,15 @@
 import logging
 import traceback
 import asyncio
-from typing import Tuple, Optional, Any, List
-from app.network import process_with_polza, process_video_polza
+from typing import Tuple, Optional, List
+
+# Импорты наших классов
+from app.services.models.images.nanabanana import NanoBanana
+from app.services.models.images.nanabanana_pro import NanoBananaPro
+from app.services.models.images.seedream import Seedream
+from app.services.models.video.kling_standard import KlingStandard
+from app.services.models.video.kling_motion import KlingMotionControl  # Исправили имя
+
 import database as db
 
 COSTS = {
@@ -11,83 +18,79 @@ COSTS = {
     "seedream": 2,
     "kling_5": 5,
     "kling_10": 10,
-    "kling_motion": 5
+    "kling_motion": 15  # Motion Control обычно дороже
 }
 
-def cost_for(model: str) -> int:
-    return COSTS.get(model, 1)
 
+# --- Логика баланса остается без изменений ---
 async def has_balance(user_id: int, model_or_cost) -> bool:
     try:
-        if isinstance(model_or_cost, str):
-            cost = cost_for(model_or_cost)
-        else:
-            cost = int(model_or_cost)
+        cost = COSTS.get(model_or_cost, model_or_cost) if isinstance(model_or_cost, str) else model_or_cost
         balance = await db.get_balance(user_id)
-        logging.info(f"📊 [BALANCE] User {user_id}: {balance}, Cost: {cost}")
         return balance >= cost
-    except Exception as e:
-        logging.error(f"❌ Ошибка has_balance (User {user_id}): {e}")
+    except Exception:
         return False
 
+
 async def charge(user_id: int, model_or_cost):
-    try:
-        if isinstance(model_or_cost, str):
-            cost = cost_for(model_or_cost)
-        else:
-            cost = int(model_or_cost)
-        await db.update_balance(user_id, -cost)
-        logging.info(f"✅ [ОПЛАТА] Списано {cost} ⚡ у {user_id}")
-    except Exception as e:
-        logging.error(f"⚠️ Ошибка списания (User {user_id}): {e}")
+    cost = COSTS.get(model_or_cost, model_or_cost) if isinstance(model_or_cost, str) else model_or_cost
+    await db.update_balance(user_id, -cost)
+
 
 # ================================
-# 🔥 ГЕНЕРАЦИЯ ФОТО
+# 🔥 ГЕНЕРАЦИЯ ФОТО (Диспетчер)
 # ================================
-async def generate(image_urls: List[str], prompt: str, model: str) -> Tuple[Optional[bytes], Optional[str], Optional[str]]:
-    """Генерация изображений. Возвращает (байты, расширение, прямая_ссылка)."""
+async def generate(image_urls: List[str], prompt: str, model: str) -> Tuple[
+    Optional[bytes], Optional[str], Optional[str]]:
     try:
-        logging.info(f"--- 🛠 Запуск генерации фото: {model} ---")
+        logging.info(f"--- 🛠 Выбор модели фото: {model} ---")
 
-        result = await process_with_polza(prompt, model, image_urls)
+        if model == "nanabanana":
+            engine = NanoBanana()
+            # Nano Banana поддерживает референсы
+            return await engine.generate(prompt, image_urls=image_urls)
 
-        # Проверка: если результат пустой или нет ссылки (третий элемент в кортеже)
-        if not result or len(result) < 3 or result[2] is None:
-            logging.warning(f"⚠️ [API] {model} вернул ошибку, статус FAILED или пустой URL.")
-            return None, None, None
+        elif model == "nanabanana_pro":
+            engine = NanoBananaPro()
+            return await engine.generate(prompt)
 
-        img_bytes, ext, result_url = result
+        elif model == "seedream":
+            engine = Seedream()
+            # Seedream поддерживает до 14 референсов
+            return await engine.generate(prompt, image_urls=image_urls)
 
-        logging.info(f"✅ [УСПЕХ] {model} готов. URL: {result_url}")
-        return img_bytes, ext, result_url
+        return None, None, None
 
     except Exception as e:
         logging.error(f"❌ [GENERATE ERROR]: {e}")
         return None, None, None
 
+
 # ================================
-# 🔥 ГЕНЕРАЦИЯ ВИДЕО
+# 🔥 ГЕНЕРАЦИЯ ВИДЕО (Диспетчер)
 # ================================
-async def generate_video(image_url: str, prompt: str, model: str = "kling_5") -> Tuple[Optional[bytes], Optional[str], Optional[str]]:
-    """Генерация видео. Возвращает (байты, расширение, прямая_ссылка)."""
+async def generate_video(image_url: str, prompt: str, model: str = "kling_5", motion_video_url: str = None) -> Tuple[
+    Optional[bytes], Optional[str], Optional[str]]:
     try:
-        logging.info(f"--- 🎬 Запуск видео: {model} ---")
+        logging.info(f"--- 🎬 Выбор видео-движка: {model} ---")
 
-        result = await process_video_polza(prompt, model, image_url)
+        if model == "kling_motion":
+            if not image_url or not motion_video_url:
+                logging.error("❌ Для kling_motion нужны и фото, и видео референсы")
+                return None, None, None
+            engine = KlingMotionControl()
+            return await engine.generate(prompt, image_url, motion_video_url)
 
-        # Проверка: если результат пустой или нет ссылки
-        if not result or len(result) < 3 or result[2] is None:
-            logging.warning(f"⚠️ [API] Видео модель {model} не смогла создать файл (FAILED).")
-            return None, None, None
+        elif model in ("kling_5", "kling_10"):
+            # В KlingStandard длительность передается числом
+            duration = 5 if model == "kling_5" else 10
+            engine = KlingStandard()
+            # Передаем image_url как список для совместимости с логикой модели
+            img_list = [image_url] if image_url else None
+            return await engine.generate(prompt, image_urls=img_list, duration=duration)
 
-        video_bytes, ext, video_url = result
+        return None, None, None
 
-        logging.info(f"✅ [УСПЕХ] Видео {model} получено. URL: {video_url}")
-        return video_bytes, ext, video_url
-
-    except asyncio.TimeoutError:
-        logging.error(f"⌛ [TIMEOUT] Глобальный таймаут генерации видео.")
-        return None, "timeout", None
     except Exception as e:
         logging.error(f"❌ [VIDEO ERROR]: {traceback.format_exc()}")
         return None, None, None

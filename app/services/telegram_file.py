@@ -6,29 +6,29 @@ import logging
 from aiogram import Bot
 from typing import Optional, Tuple
 
+# Импортируем наши настройки и коннектор
+from app.config import settings
+from app.network import get_connector
+
 
 async def get_telegram_photo_url(bot: Bot, file_id: str) -> Optional[str]:
     """
-    Для фото: пробует Telegraph, если не выходит — дает прямую ссылку.
-    Для видео: сразу дает прямую ссылку.
+    Загружает фото на Telegraph для получения постоянной ссылки.
+    Для видео возвращает прямую временную ссылку TG.
     """
-    token = os.getenv("BOT_TOKEN")
-    if not token:
-        logging.error("❌ BOT_TOKEN не найден в переменных окружения")
-        return None
-
     try:
         file = await bot.get_file(file_id)
-        tg_url = f"https://api.telegram.org/file/bot{token}/{file.file_path}"
+        # Используем токен из нашего конфига
+        tg_url = f"https://api.telegram.org/file/bot{settings.bot_token}/{file.file_path}"
 
         if any(ext in file.file_path.lower() for ext in [".mp4", ".mov", ".avi"]):
-            logging.info(f"🎥 Видео обнаружено, используем прямую ссылку: {tg_url}")
             return tg_url
 
-        async with aiohttp.ClientSession() as session:
+        # Используем наш общий коннектор, но для Telegraph создаем отдельную сессию
+        # (так как это сторонний сервис)
+        async with aiohttp.ClientSession(connector=get_connector()) as session:
             async with session.get(tg_url) as resp:
                 if resp.status != 200:
-                    logging.warning(f"⚠️ Не удалось скачать файл из TG, статус: {resp.status}")
                     return tg_url
                 file_data = await resp.read()
 
@@ -40,11 +40,8 @@ async def get_telegram_photo_url(bot: Bot, file_id: str) -> Optional[str]:
                     result = await up_resp.json()
                     if isinstance(result, list) and len(result) > 0:
                         path = result[0].get('src')
-                        res_url = f"https://telegra.ph{path}"
-                        logging.info(f"✅ Фото на Telegraph: {res_url}")
-                        return res_url
+                        return f"https://telegra.ph{path}"
 
-                logging.warning(f"⚠️ Telegraph (код {up_resp.status}), используем прямую ссылку")
                 return tg_url
 
     except Exception as e:
@@ -54,102 +51,44 @@ async def get_telegram_photo_url(bot: Bot, file_id: str) -> Optional[str]:
 
 async def download_telegram_file(bot: Bot, file_id: str) -> Tuple[Optional[bytes], str]:
     """
-    Скачивает файл из Telegram и возвращает (bytes, mime_type).
-    Поддерживает большие видео с длительными таймаутами.
+    Скачивает файл из Telegram.
+    Поддерживает видео до 500МБ и фото до 50МБ.
     """
-    token = os.getenv("BOT_TOKEN")
-    if not token:
-        logging.error("❌ BOT_TOKEN не найден в переменных окружения")
-        return None, ""
-
     try:
         file = await bot.get_file(file_id)
-        tg_url = f"https://api.telegram.org/file/bot{token}/{file.file_path}"
+        tg_url = f"https://api.telegram.org/file/bot{settings.bot_token}/{file.file_path}"
 
         is_video = any(ext in file.file_path.lower() for ext in [".mp4", ".mov", ".avi", ".mkv"])
         mime = "video/mp4" if is_video else "image/jpeg"
 
-        # Устанавливаем таймаут в зависимости от типа файла
-        if is_video:
-            # Для видео — длительный таймаут (10 минут)
-            timeout = aiohttp.ClientTimeout(total=600, connect=30, sock_read=120)
-            max_size = 500 * 1024 * 1024  # 500 MB для видео
-        else:
-            # Для фото — обычный таймаут (2 минуты)
-            timeout = aiohttp.ClientTimeout(total=120, connect=30, sock_read=60)
-            max_size = 50 * 1024 * 1024  # 50 MB для фото
+        # Настройки таймаутов
+        timeout = aiohttp.ClientTimeout(total=600 if is_video else 120, connect=30)
+        max_size = (500 if is_video else 50) * 1024 * 1024
 
-        logging.info(
-            f"📥 Начинаю скачивание {'видео' if is_video else 'фото'} ({file.file_size / (1024 * 1024) if file.file_size else '?':.1f} MB)...")
+        logging.info(f"📥 Скачивание {'видео' if is_video else 'фото'}...")
 
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        # Важно: используем общую сессию бота, если она доступна,
+        # или создаем новую с нашим коннектором
+        async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout) as session:
             async with session.get(tg_url) as resp:
                 if resp.status != 200:
-                    logging.error(f"❌ Не удалось скачать файл: HTTP {resp.status}")
                     return None, ""
 
-                # Проверяем размер файла из заголовка
-                content_length = resp.headers.get('Content-Length')
-                if content_length:
-                    file_size = int(content_length)
-                    if file_size > max_size:
-                        logging.error(
-                            f"❌ Файл слишком большой: {file_size / (1024 * 1024):.1f} MB (макс: {max_size / (1024 * 1024):.1f} MB)")
-                        return None, ""
-
-                # Скачиваем файл с контролем размера (постепенно по 1 MB)
-                data = b''
-                chunk_size = 1024 * 1024  # 1 MB на итерацию
-                async for chunk in resp.content.iter_chunked(chunk_size):
-                    data += chunk
+                data = bytearray()
+                async for chunk in resp.content.iter_chunked(1024 * 1024):  # по 1МБ
+                    data.extend(chunk)
                     if len(data) > max_size:
-                        logging.error(
-                            f"❌ Файл превышает лимит размера ({max_size / (1024 * 1024):.1f} MB) во время скачивания")
+                        logging.error("❌ Превышен лимит размера файла")
                         return None, ""
 
-                logging.info(f"✅ Файл скачан из TG: {len(data) / 1024:.1f} KB, {mime}")
-                return data, mime
+                return bytes(data), mime
 
-    except asyncio.TimeoutError:
-        logging.error(f"⏰ Таймаут при скачивании файла из TG")
-        return None, ""
-    except aiohttp.ClientError as e:
-        logging.error(f"❌ Ошибка сети при скачивании файла: {e}")
-        return None, ""
     except Exception as e:
-        logging.error(f"❌ Ошибка скачивания файла из TG: {e}")
-        logging.error(f"   Type: {type(e).__name__}")
+        logging.error(f"❌ Ошибка скачивания: {e}")
         return None, ""
 
 
 def bytes_to_base64_data_uri(data: bytes, mime_type: str) -> str:
-    """
-    Конвертирует байты в data URI (base64).
-
-    Args:
-        data: Байты файла
-        mime_type: MIME тип (например, "image/jpeg" или "video/mp4")
-
-    Returns:
-        Data URI строка (например, "data:image/jpeg;base64,...")
-    """
-    if not mime_type or '/' not in mime_type:
-        mime_type = 'application/octet-stream'
-
+    """Конвертирует байты в формат, понятный для API Polza (Data URI)"""
     b64 = base64.b64encode(data).decode("utf-8")
     return f"data:{mime_type};base64,{b64}"
-
-
-async def get_file_size_from_telegram(bot: Bot, file_id: str) -> Optional[int]:
-    """
-    Получает размер файла из Telegram без скачивания.
-
-    Returns:
-        Размер файла в байтах или None
-    """
-    try:
-        file = await bot.get_file(file_id)
-        return file.file_size
-    except Exception as e:
-        logging.error(f"❌ Ошибка получения размера файла: {e}")
-        return None

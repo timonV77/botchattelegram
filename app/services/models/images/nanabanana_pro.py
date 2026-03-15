@@ -12,13 +12,29 @@ def _as_dict(payload):
     return {}
 
 
-def _extract_b64(data_uri: str) -> str:
-    """
-    data:image/png;base64,XXXX -> XXXX
-    """
-    if "," in data_uri:
-        return data_uri.split(",", 1)[1].strip()
-    return data_uri.strip()
+def _normalize_urls(image_urls):
+    if image_urls is None:
+        return []
+    if isinstance(image_urls, str):
+        image_urls = [image_urls]
+    elif isinstance(image_urls, dict):
+        image_urls = [image_urls.get("url") or image_urls.get("data")]
+    elif not isinstance(image_urls, list):
+        return []
+
+    out = []
+    for x in image_urls:
+        if isinstance(x, str):
+            s = x.strip()
+            if s.startswith("http://") or s.startswith("https://"):
+                out.append(s)
+        elif isinstance(x, dict):
+            s = x.get("url") or x.get("data")
+            if isinstance(s, str):
+                s = s.strip()
+                if s.startswith("http://") or s.startswith("https://"):
+                    out.append(s)
+    return out[:8]
 
 
 class NanoBananaPro:
@@ -30,13 +46,7 @@ class NanoBananaPro:
             "Content-Type": "application/json"
         }
 
-    async def generate(
-        self,
-        prompt: str,
-        image_urls: list = None,
-        resolution: str = "1K",
-        aspect_ratio: str = "1:1"
-    ):
+    async def generate(self, prompt: str, image_urls=None, resolution: str = "1K", aspect_ratio: str = "1:1"):
         payload_input = {
             "prompt": prompt,
             "aspect_ratio": aspect_ratio if self.is_pro or aspect_ratio != "auto" else "1:1",
@@ -48,36 +58,9 @@ class NanoBananaPro:
             if not aspect_ratio:
                 payload_input["aspect_ratio"] = "auto"
 
-        if image_urls:
-            logging.info(
-                "NanoBananaPro first image sample: %r",
-                image_urls[0][:80] if isinstance(image_urls[0], str) else image_urls[0]
-            )
-
-            payload_input["images"] = []
-            for src in image_urls[:8]:
-                if not isinstance(src, str):
-                    continue
-
-                s = src.strip()
-                s_low = s.lower()
-
-                # Поддержка любого data:*;base64,...
-                if s_low.startswith("data:") and "base64," in s_low:
-                    payload_input["images"].append({
-                        "type": "base64",
-                        "data": _extract_b64(s)
-                    })
-                elif s_low.startswith("http://") or s_low.startswith("https://"):
-                    payload_input["images"].append({
-                        "type": "url",
-                        "data": s
-                    })
-                else:
-                    logging.warning(
-                        "NanoBananaPro: skipped unknown image src prefix: %r",
-                        s[:60]
-                    )
+        urls = _normalize_urls(image_urls)
+        if urls:
+            payload_input["images"] = [{"type": "url", "data": u} for u in urls]
 
         logging.info("NanoBananaPro images_count=%s", len(payload_input.get("images", [])))
 
@@ -99,15 +82,13 @@ class NanoBananaPro:
                     raw_data = await resp.json(content_type=None)
                     data = _as_dict(raw_data)
                     request_id = data.get("id") or data.get("request_id")
-
                     if not request_id:
-                        logging.error("❌ NanoBananaPro: request_id не найден. raw=%r", raw_data)
+                        logging.error("❌ request_id не найден. raw=%r", raw_data)
                         return None, None, None
 
                 max_attempts = 60 if self.is_pro else 30
                 for _ in range(max_attempts):
                     await asyncio.sleep(5)
-
                     async with session.get(f"{BASE_URL}/media/{request_id}", headers=self.headers) as r:
                         if r.status != 200:
                             continue
@@ -119,16 +100,13 @@ class NanoBananaPro:
                         if status == "completed":
                             data_obj = _as_dict(res.get("data"))
                             final_url = data_obj.get("url") or res.get("url")
-
                             if not final_url:
                                 outputs = res.get("outputs")
                                 if isinstance(outputs, list) and outputs and isinstance(outputs[0], dict):
                                     final_url = outputs[0].get("url")
-
                             if not final_url:
-                                logging.error("❌ NanoBananaPro completed без url. raw=%r", raw_res)
+                                logging.error("❌ completed без url. raw=%r", raw_res)
                                 return None, None, None
-
                             return await _download_content_bytes(session, final_url)
 
                         if status in ("failed", "error", "cancelled"):

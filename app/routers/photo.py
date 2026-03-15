@@ -73,9 +73,15 @@ async def background_photo_gen(
     user_id: int,
 ):
     try:
-        # Для PRO принудительно data URI, чтобы референс не терялся
-        force_data = model == "nanabanana_pro"
-        photo_sources = await _build_image_sources(bot, photo_ids, force_data_uri=force_data)
+        # Для Polza NanoBananaPro референсы должны быть URL (http/https), не data URI
+        photo_sources = await _build_image_sources(bot, photo_ids, force_data_uri=False)
+
+        if model == "nanabanana_pro":
+            photo_sources = [
+                s for s in photo_sources
+                if isinstance(s, str) and (s.startswith("http://") or s.startswith("https://"))
+            ]
+            logging.info("nanabanana_pro filtered url_sources=%s", len(photo_sources))
 
         if not photo_sources:
             await bot.send_message(chat_id, "⚠️ Не удалось подготовить фото-референс.")
@@ -100,7 +106,6 @@ async def background_photo_gen(
     except Exception:
         logging.error("❌ [PHOTO ERROR]: %s", traceback.format_exc())
         await bot.send_message(chat_id, "⚠️ Ошибка при создании фото.")
-
 
 async def background_video_gen_combined(
     bot: Bot,

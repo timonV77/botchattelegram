@@ -109,3 +109,14 @@ async def balance_handler(message: types.Message):
     except Exception as e:
         logging.error(f"❌ Ошибка при проверке баланса: {e}")
         await message.answer("⚠️ Не удалось получить данные о балансе.")
+
+
+@router.message()
+async def _debug_any_message(message: types.Message, state: FSMContext):
+    st = await state.get_state()
+    logging.info(
+        "DEBUG start.catch_all: text=%r content_type=%s state=%r",
+        message.text,
+        message.content_type,
+        st
+    )

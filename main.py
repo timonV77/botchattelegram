@@ -3,22 +3,21 @@ import os
 import logging
 import ssl
 
-from aiohttp import web, ClientSession  # Добавили ClientSession
-from aiogram.client.session.aiohttp import AiohttpSession
+from aiohttp import web
+from aiogram import Bot # Импортируем Bot напрямую
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 
-# Импортируем только dp и фабрику бота
-from app.bot import dp, create_bot
+from app.bot import dp, settings # Добавь импорт settings из твоего конфига
 from app.routers import setup_routers
 from app.routers.payments import prodamus_webhook
 import database as db
 from app.routers.album_middleware import AlbumMiddleware
-from app.network import get_connector
 
 # --- КОНФИГУРАЦИЯ ---
 WEBHOOK_PORT = 8443
 WEBHOOK_SSL_CERT = "/root/botchattelegram/certs/cert.pem"
 WEBHOOK_SSL_PRIV = "/root/botchattelegram/certs/private.key"
-
 
 async def main():
     # Настройка логирования
@@ -30,14 +29,12 @@ async def main():
     # 1. Инициализация базы данных
     await db.init_db()
 
-    # 2. Настройка сетевой сессии (Решение ошибки TypeError и Event Loop)
-    connector = get_connector()
-    # В aiogram 3.x кастомный коннектор передается через aiohttp.ClientSession
-    client_session = ClientSession(connector=connector)
-    session = AiohttpSession(session=client_session)
-
-    # Инициализируем бота с привязкой к сессии
-    bot = create_bot(session)
+    # 2. Инициализация Бота (Самый простой и стабильный способ)
+    # aiogram сам создаст AiohttpSession внутри
+    bot = Bot(
+        token=settings.bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+    )
 
     # 3. Настройка роутеров и Middleware
     setup_routers(dp)
@@ -46,10 +43,7 @@ async def main():
 
     # 4. Запуск сервера для Prodamus
     app = web.Application(client_max_size=100 * 1024 * 1024)
-
-    # ВАЖНО: сохраняем бота в контекст приложения, чтобы payments.py его видел
-    app['bot'] = bot
-
+    app['bot'] = bot # Критически важно для payments.py
     app.router.add_post("/payments/prodamus", prodamus_webhook)
 
     runner = web.AppRunner(app)
@@ -69,7 +63,6 @@ async def main():
     # 5. СТАРТ БОТА
     logging.info("🚀 Запуск Polling...")
     try:
-        # Очистка старых обновлений
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot)
     except Exception as e:
@@ -77,15 +70,10 @@ async def main():
     finally:
         logging.info("♻️ Завершение работы: очистка ресурсов...")
         await runner.cleanup()
-
-        # Правильное закрытие сессий
-        await session.close()
-        if not client_session.closed:
-            await client_session.close()
-
+        # Закрываем сессию бота
+        await bot.session.close()
         await db.close_db()
         logging.info("🛑 Процесс завершен")
-
 
 if __name__ == "__main__":
     try:

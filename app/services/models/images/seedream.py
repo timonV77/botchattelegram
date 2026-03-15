@@ -1,7 +1,42 @@
 import asyncio
 import logging
 import aiohttp
+from typing import Optional, Tuple
 from app.network import BASE_URL, POLZA_API_KEY, get_connector, timeout_config, _download_content_bytes
+
+
+def _as_dict(payload):
+    if isinstance(payload, dict):
+        return payload
+    if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+        return payload[0]
+    return {}
+
+
+def _normalize_urls(image_urls):
+    if image_urls is None:
+        return []
+    if isinstance(image_urls, str):
+        image_urls = [image_urls]
+    elif isinstance(image_urls, dict):
+        image_urls = [image_urls.get("url") or image_urls.get("data")]
+    elif not isinstance(image_urls, list):
+        return []
+
+    out = []
+    for x in image_urls:
+        if isinstance(x, str):
+            s = x.strip()
+            if s.startswith("http://") or s.startswith("https://"):
+                out.append(s)
+        elif isinstance(x, dict):
+            s = x.get("url") or x.get("data")
+            if isinstance(s, str):
+                s = s.strip()
+                if s.startswith("http://") or s.startswith("https://"):
+                    out.append(s)
+    # По доке Seedream лимит - 14 референсов
+    return out[:14]
 
 
 class Seedream:
@@ -12,27 +47,22 @@ class Seedream:
             "Content-Type": "application/json"
         }
 
-    async def generate(self, prompt: str, image_urls: list = None, quality: str = "basic", aspect_ratio: str = "1:1"):
-        """
-        Генерация изображения через Seedream 4.5.
-        quality: 'basic' (2K), 'high' (4K)
-        aspect_ratio: '1:1', '16:9', '21:9', etc.
-        """
-        # Базовые параметры
-        # У этой модели prompt, aspect_ratio и quality являются ОБЯЗАТЕЛЬНЫМИ
+    async def generate(self, prompt: str, image_urls=None, quality: str = "basic", aspect_ratio: str = "1:1") -> Tuple[
+        Optional[bytes], Optional[str], Optional[str]]:
+        # Ограничение промпта по доке (до 3000 символов)
+        prompt = prompt[:3000]
+
         payload_input = {
             "prompt": prompt,
             "aspect_ratio": aspect_ratio,
             "quality": quality
         }
 
-        # Обработка референсов (до 14 штук)
-        if image_urls:
-            # Ограничиваем до 14 штук согласно лимитам модели
-            valid_urls = image_urls[:14]
-            payload_input["images"] = [
-                {"type": "url", "data": url} for url in valid_urls
-            ]
+        # Обработка референсов
+        urls = _normalize_urls(image_urls)
+        if urls:
+            payload_input["images"] = [{"type": "url", "data": u} for u in urls]
+            logging.info("Seedream images_count=%s", len(payload_input["images"]))
 
         payload = {
             "model": self.model_id,
@@ -42,33 +72,50 @@ class Seedream:
 
         async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as session:
             try:
-                logging.info(f"🌊 Seedream Request (Quality: {quality})")
+                logging.info("🌊 Seedream Request (Quality: %s)", quality)
                 async with session.post(f"{BASE_URL}/media", headers=self.headers, json=payload) as resp:
                     if resp.status not in (200, 201):
-                        logging.error(f"❌ Seedream Error: {await resp.text()}")
+                        logging.error("❌ Seedream Error: %s", await resp.text())
                         return None, None, None
 
-                    data = await resp.json()
-                    request_id = data.get("id")
+                    raw_data = await resp.json(content_type=None)
+                    data = _as_dict(raw_data)
+                    request_id = data.get("id") or data.get("request_id")
+
+                    if not request_id:
+                        logging.error("❌ Seedream request_id не найден. raw=%r", raw_data)
+                        return None, None, None
 
                 # Polling: Seedream довольно быстрая (проверка каждые 5 сек)
                 for attempt in range(40):  # До ~200 секунд
                     await asyncio.sleep(5)
                     async with session.get(f"{BASE_URL}/media/{request_id}", headers=self.headers) as r:
-                        if r.status != 200: continue
-                        res = await r.json()
+                        if r.status != 200:
+                            continue
+
+                        raw_res = await r.json(content_type=None)
+                        res = _as_dict(raw_res)
                         status = res.get("status")
 
                         if status == "completed":
-                            # Ссылка в data.url по документации GET Media Status
-                            final_url = res.get("data", {}).get("url")
+                            data_obj = _as_dict(res.get("data"))
+                            final_url = data_obj.get("url") or res.get("url")
+                            if not final_url:
+                                outputs = res.get("outputs")
+                                if isinstance(outputs, list) and outputs and isinstance(outputs[0], dict):
+                                    final_url = outputs[0].get("url")
+
+                            if not final_url:
+                                logging.error("❌ Seedream completed без url. raw=%r", raw_res)
+                                return None, None, None
+
                             return await _download_content_bytes(session, final_url)
 
-                        if status in ("failed", "cancelled"):
-                            logging.error(f"❌ Seedream Failed: {res.get('error')}")
+                        if status in ("failed", "error", "cancelled"):
+                            logging.error("❌ Seedream Failed: %s | raw=%r", res.get("error"), raw_res)
                             break
 
             except Exception as e:
-                logging.error(f"❌ Seedream Exception: {e}")
+                logging.error("❌ Seedream Exception: %s", e)
 
         return None, None, None

@@ -65,29 +65,31 @@ async def _build_image_sources(
 # --- ФОНОВЫЕ ЗАДАЧИ ---
 
 async def background_photo_gen(
-    bot: Bot,
-    chat_id: int,
-    photo_ids: List[str],
-    prompt: str,
-    model: str,
-    user_id: int,
+        bot: Bot,
+        chat_id: int,
+        photo_ids: List[str],
+        prompt: str,
+        model: str,
+        user_id: int,
 ):
     try:
-        # Для Polza NanoBananaPro референсы должны быть URL (http/https), не data URI
+        # Для Polza NanoBananaPro и Seedream референсы должны быть URL (http/https), не data URI
         photo_sources = await _build_image_sources(bot, photo_ids, force_data_uri=False)
 
-        if model == "nanabanana_pro":
+        if model in ("nanabanana_pro", "seedream"):
             photo_sources = [
                 s for s in photo_sources
                 if isinstance(s, str) and (s.startswith("http://") or s.startswith("https://"))
             ]
-            logging.info("nanabanana_pro filtered url_sources=%s", len(photo_sources))
+            logging.info("%s filtered url_sources=%s", model, len(photo_sources))
 
         if not photo_sources:
             await bot.send_message(chat_id, "⚠️ Не удалось подготовить фото-референс.")
             return
 
-        result = await generate(photo_sources, prompt, model)
+        # Используем именованные аргументы для 100% защиты от перепутанны�� параметров
+        result = await generate(image_urls=photo_sources, prompt=prompt, model=model)
+
         if not result or not result[0]:
             await bot.send_message(chat_id, "⚠️ Не удалось получить результат от нейросети.")
             return

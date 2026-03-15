@@ -15,7 +15,7 @@ from app.keyboards.inline import (
     model_inline, kling_inline, motion_control_mode_inline,
     motion_control_orientation_inline
 )
-from app.services.telegram_file import get_telegram_photo_url, get_telegram_video_url
+from app.services.telegram_file import get_telegram_photo_url
 from app.services.generation import has_balance, generate, charge, generate_video
 
 import database as db
@@ -76,7 +76,7 @@ async def background_video_gen_combined(chat_id: int, photo_id: str, prompt: str
         # Получаем URL видео-движения (если это motion control)
         motion_url = None
         if motion_video_id:
-            motion_url = await get_telegram_video_url(global_bot, motion_video_id)
+            motion_url = await get_telegram_photo_url(global_bot, motion_video_id)
 
         final_prompt = prompt if (prompt and prompt.strip() != ".") else "High quality, cinematic"
 

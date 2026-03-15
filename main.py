@@ -44,36 +44,22 @@ async def main():
     await db.init_db()
 
     # 2. Роутеры и Middleware
-    dp.message.middleware(AlbumMiddleware(latency=0.6))
     setup_routers(dp)
-    logging.info("✅ Роутеры и Middleware настроены")
+    dp.message.middleware(AlbumMiddleware(latency=0.6))
+    logging.info("✅ База и роутеры готовы")
 
-    # 3. Настройка сессии (Твои настройки TLS и IPv4)
-    timeout = ClientTimeout(total=600, connect=30, sock_read=300)
-    custom_ssl_context = ssl.create_default_context()
-    custom_ssl_context.set_ciphers('DEFAULT@SECLEVEL=1')
-    custom_ssl_context.maximum_version = ssl.TLSVersion.TLSv1_2
-    custom_ssl_context.check_hostname = False
-    custom_ssl_context.verify_mode = ssl.CERT_NONE
-
-    session = AiohttpSession(timeout=timeout)
-    session._connector = aiohttp.TCPConnector(
-        ssl=custom_ssl_context,
-        family=socket.AF_INET,
-        resolver=aiohttp.ThreadedResolver()
-    )
-    session.middleware(retry_middleware)
+    # 3. Упрощенная сессия (без лишних сложностей, которые могут вешать старт)
+    # Используем стандартный коннектор, но с отключенным SSL-верификатором
+    connector = aiohttp.TCPConnector(ssl=False, family=socket.AF_INET)
+    session = AiohttpSession(connector=connector)
     bot.session = session
+    logging.info("✅ Сессия создана (SSL OFF)")
 
-    # 4. Очистка вебхука и запуск Polling в фоне
-    await bot.delete_webhook(drop_pending_updates=True)
-    logging.info("🗑 Старый вебхук удален, ожидающие сообщения очищены")
-
-    # 5. Настройка сервера для Prodamus (Webhook для платежей)
+    # 4. Запуск сервера для Prodamus в фоне
     app = web.Application(client_max_size=100 * 1024 * 1024)
     app.router.add_post("/payments/prodamus", prodamus_webhook)
 
-    # Настройка SSL для Prodamus
+    # SSL для платежей (оставляем как было)
     context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
     context.load_cert_chain(WEBHOOK_SSL_CERT, WEBHOOK_SSL_PRIV)
 
@@ -81,16 +67,17 @@ async def main():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", WEBHOOK_PORT, ssl_context=context)
     await site.start()
-    logging.info(f"💳 Сервер платежей Prodamus запущен на порту {WEBHOOK_PORT}")
+    logging.info(f"💳 Prodamus на порту {WEBHOOK_PORT}")
 
-    # 6. ЗАПУСК БОТА (Long Polling)
-    logging.info("🚀 Бот запущен в режиме Long Polling!")
+    # 5. СТАРТ БОТА (с принудительным дропом вебхука внутри polling)
+    logging.info("🚀 Пробую запустить Polling...")
     try:
-        await dp.start_polling(bot)
+        # skip_updates=True заставит бота игнорировать старые сообщения,
+        # которые накопились, пока он лежал (это разгрузит сервер на старте)
+        await dp.start_polling(bot, skip_updates=True)
     except Exception as e:
-        logging.error(f"❌ Ошибка при опросе: {e}")
+        logging.error(f"❌ Ошибка в Polling: {e}")
     finally:
-        await bot.session.close()
         await runner.cleanup()
         await db.close_db()
 

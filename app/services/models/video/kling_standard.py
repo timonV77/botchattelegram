@@ -4,14 +4,12 @@ import aiohttp
 from typing import Optional, Tuple
 from app.network import BASE_URL, POLZA_API_KEY, get_connector, timeout_config, _download_content_bytes
 
-
 def _as_dict(payload):
     if isinstance(payload, dict):
         return payload
     if isinstance(payload, list) and payload and isinstance(payload[0], dict):
         return payload[0]
     return {}
-
 
 def _normalize_urls(image_urls):
     if image_urls is None:
@@ -35,13 +33,13 @@ def _normalize_urls(image_urls):
                 s = s.strip()
                 if s.startswith("http://") or s.startswith("https://"):
                     out.append(s)
-    # По доке Kling: от 0 до 2 референсов
-    return out[:2]
-
+    # По доке Kling 2.5 Turbo: 0–1 референс
+    return out[:1]
 
 class KlingStandard:
     def __init__(self):
-        self.model_id = "kling/v3"
+        # 🔥 Переключились на 2.5 Turbo
+        self.model_id = "kling/v2.5-turbo"
         self.headers = {
             "Authorization": f"Bearer {POLZA_API_KEY}",
             "Content-Type": "application/json"
@@ -49,7 +47,7 @@ class KlingStandard:
 
     async def generate(self, prompt: str, image_urls=None, duration="5") -> Tuple[Optional[bytes], Optional[str], Optional[str]]:
         try:
-            # Ограничение промпта по доке (до 2500 символов)
+            # Ограничение промпта (обычно до 2500 символов)
             prompt = prompt[:2500]
 
             # Сервер строго требует строку для duration ("5" или "10")
@@ -59,8 +57,8 @@ class KlingStandard:
                 "prompt": prompt,
                 "duration": duration_str,
                 "aspect_ratio": "16:9",
-                "mode": "std",
-                "sound": "false"  # Строго строка
+                "cfg_scale": 0.7,
+                "negative_prompt": ""
             }
 
             # Обработка референсов
@@ -76,7 +74,7 @@ class KlingStandard:
             }
 
             async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as session:
-                logging.info(f"🎬 Запуск Kling Standard (Duration: {duration_str}s)")
+                logging.info(f"🎬 Запуск Kling 2.5 Turbo (Duration: {duration_str}s)")
                 async with session.post(f"{BASE_URL}/media", headers=self.headers, json=payload) as resp:
                     if resp.status not in (200, 201):
                         logging.error(f"❌ Kling API Error: {await resp.text()}")
@@ -113,7 +111,7 @@ class KlingStandard:
                                 logging.error(f"❌ Kling completed без url. raw={raw_res}")
                                 return None, None, None
 
-                            # Скачиваем результат
+                            # ✅ Исправленный баг с кортежем (возвращаем напрямую)
                             return await _download_content_bytes(session, final_url)
 
                         if status in ("failed", "error", "cancelled"):

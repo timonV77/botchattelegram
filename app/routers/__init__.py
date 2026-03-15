@@ -8,16 +8,15 @@ from .broadcast import router as broadcast_router
 
 
 def setup_routers(dp: Dispatcher):
-    dp.include_router(broadcast_router)
-    # 1. Сначала системные команды (/start, помощь, отмена)
+    # 1) Базовые команды
     dp.include_router(start_router)
 
-    # 2. Профили и баланс
+    # 2) Баланс/платежи
     dp.include_router(balance_router)
-
-    # 3. Платежи (чтобы кнопки пополнения работали всегда)
     dp.include_router(payments_router)
 
-    # 4. В самом конце — логика работы с фото и нейросетью
-    # Так как этот роутер часто перехватывает "всё подряд"
+    # 3) Основной пользовательский флоу
     dp.include_router(photo_router)
+
+    # 4) Последним — broadcast (чтобы не перехватывал всё)
+    dp.include_router(broadcast_router)

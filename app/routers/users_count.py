@@ -2,7 +2,7 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
-from app.database import get_users_count
+from database import get_users_count
 
 router = Router()
 

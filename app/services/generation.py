@@ -16,7 +16,7 @@ COSTS = {
     "seedream": 2,
     "kling_5": 5,
     "kling_10": 10,
-    "kling_motion": 15
+    "kling_motion": 10
 }
 
 

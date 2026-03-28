@@ -54,7 +54,7 @@ def kling_inline() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    text="🎭 Motion Control — 5/10 ⚡",
+                    text="🎭 Motion Control — 10 ⚡",
                     callback_data="model_kling_motion",
                 )
             ],

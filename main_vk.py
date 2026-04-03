@@ -74,11 +74,25 @@ async def on_startup():
         runner = web.AppRunner(app)
         await runner.setup()
 
-        site = web.TCPSite(runner, "0.0.0.0", webhook_port)
+        # Добавляем SSL-сертификаты, как в Telegram-версии
+        WEBHOOK_SSL_CERT = "/root/botchattelegram/certs/cert.pem"
+        WEBHOOK_SSL_PRIV = "/root/botchattelegram/certs/private.key"
+
+        if os.path.exists(WEBHOOK_SSL_CERT) and os.path.exists(WEBHOOK_SSL_PRIV):
+            context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+            context.load_cert_chain(WEBHOOK_SSL_CERT, WEBHOOK_SSL_PRIV)
+            site = web.TCPSite(runner, "0.0.0.0", webhook_port, ssl_context=context)
+            protocol = "https"
+            logging.info("✅ Запуск VK вебхука с SSL-сертификатами")
+        else:
+            site = web.TCPSite(runner, "0.0.0.0", webhook_port)
+            protocol = "http"
+            logging.warning("⚠️ SSL сертификаты не найдены. VK вебхук работает по http")
+
         await site.start()
         logging.info(f"💳 Сервер платежей VK запущен на порту {webhook_port}")
-        logging.info(f"📌 VK Webhook URL: https://neuro-photo-bot.fly.dev/vk/payments/prodamus")
-        logging.info(f"📌 VK Webhook URL (alt): https://neuro-photo-bot.fly.dev/payments/prodamus")
+        logging.info(f"📌 Готовый VK Webhook URL для Продамуса:")
+        logging.info(f"👉 {protocol}://130.49.148.165:{webhook_port}/vk/payments/prodamus")
     except Exception as e:
         logging.error(f"❌ Ошибка запуска вебхука VK: {e}")
 

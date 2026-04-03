@@ -45,11 +45,11 @@ async def generate_photo(
         logging.info("--- 🛠 VK Фото-генерация: %s ---", model)
 
         if model == "nanabanana":
-            engine = NanoBanana(version="v1")
+            engine = NanoBanana()
             return await engine.generate(prompt, image_urls=image_urls)
 
         elif model == "nanabanana_2":
-            engine = NanoBanana(version="v2")
+            engine = NanoBanana()
             return await engine.generate(prompt, image_urls=image_urls)
 
         elif model == "nanabanana_pro":
@@ -57,7 +57,8 @@ async def generate_photo(
             return await engine.generate(prompt, image_urls=image_urls)
 
         elif model == "seedream":
-            engine = Seedream()  # Seedream() теперь 5.0 Lite по умолчанию
+            engine = Seedream()
+
             return await engine.generate(prompt, image_urls=image_urls)
 
         return None, None, None

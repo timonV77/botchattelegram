@@ -5,6 +5,7 @@ import traceback
 import json
 from typing import Optional, List
 from vkbottle.bot import Bot, Message
+from vkbottle import PhotoMessageUploader, VideoUploader
 
 from app.vk.keyboards import (
     get_main_keyboard,
@@ -100,10 +101,15 @@ async def background_photo_gen(
 
         img_bytes, ext, _ = result
 
+        # Upload photo to VK
+        photo_uploader = PhotoMessageUploader(bot.api)
+        attachment = await photo_uploader.upload(img_bytes)
+
         # Send result photo
         await bot.api.messages.send(
             user_id=user_id,
             message=f"✨ Ваше изображение готово! ({MODEL_NAMES.get(model)})",
+            attachment=attachment,
             keyboard=get_main_keyboard(user_id),
             random_id=0
         )
@@ -122,6 +128,22 @@ async def background_photo_gen(
         )
 
 
+def get_mp4_duration(data: bytes) -> int:
+    try:
+        idx = data.find(b'mvhd')
+        if idx == -1: return 5
+        version = data[idx+4]
+        if version == 0:
+            timescale = int.from_bytes(data[idx+12:idx+16], 'big')
+            duration = int.from_bytes(data[idx+16:idx+20], 'big')
+        else:
+            timescale = int.from_bytes(data[idx+20:idx+24], 'big')
+            duration = int.from_bytes(data[idx+24:idx+32], 'big')
+        if timescale > 0: return round(duration / timescale)
+    except Exception:
+        pass
+    return 5
+
 async def background_video_gen(
     bot: Bot,
     user_id: int,
@@ -138,15 +160,30 @@ async def background_video_gen(
 
         if result and result[0]:
             video_bytes, ext, _ = result
+            
+            # Определяем точную длительность и стоимость
+            duration = get_mp4_duration(video_bytes)
+            per_sec_cost = 14 if model == "kling_motion_720" else 20
+            total_cost = duration * per_sec_cost
+
+            # Upload video to VK
+            video_uploader = VideoUploader(bot.api)
+            attachment = await video_uploader.upload(
+                file_source=video_bytes,
+                name=f"video_{user_id}.{ext}",
+                description="Сгенерировано нейросетью"
+            )
 
             await bot.api.messages.send(
                 user_id=user_id,
-                message=f"✅ Ваше видео готово! ({MODEL_NAMES.get(model)})",
+                message=f"✅ Ваше видео готово! ({MODEL_NAMES.get(model)})\n\n⏳ Длительность: {duration} сек.\n💰 С баланса списано: {total_cost} руб.",
+                attachment=attachment,
                 keyboard=get_main_keyboard(user_id),
                 random_id=0
             )
-            await charge(user_id, model)
-            logger.info(f"✅ Video generated for VK user {user_id}")
+            # Списываем посчитанную сумму
+            await charge(user_id, total_cost)
+            logger.info(f"✅ Video generated for VK user {user_id}. Duration: {duration}s, Cost: {total_cost}")
         else:
             await bot.api.messages.send(
                 user_id=user_id,
@@ -517,6 +554,9 @@ class VKHandlers:
                 # Get the largest size available
                 photo_url = attachment.photo.sizes[-1].url
                 break
+            elif attachment.type == "doc" and getattr(attachment.doc, "ext", "").lower() in ["jpg", "jpeg", "png", "webp"]:
+                photo_url = attachment.doc.url
+                break
 
         if not photo_url:
             await message.answer(
@@ -558,13 +598,17 @@ class VKHandlers:
         # Get video URL from attachment
         video_url = None
         for attachment in message.attachments:
-            if attachment.type == "video":
+            if attachment.type == "doc" and getattr(attachment.doc, "ext", "").lower() in ["mp4", "mov", "avi", "mkv"]:
+                video_url = attachment.doc.url
+                break
+            elif attachment.type == "video":
+                # Fallback, но это может быть ссылка на плеер
                 video_url = attachment.video.player
                 break
 
         if not video_url:
             await message.answer(
-                "⚠️ Не удалось получить видео. Попробуй еще раз.",
+                "⚠️ Не удалось получить видео. Пожалуйста, отправьте видео **как Документ (Файл)**.",
                 keyboard=get_cancel_keyboard()
             )
             return

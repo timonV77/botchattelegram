@@ -6,7 +6,7 @@ from app.network import BASE_URL, POLZA_API_KEY, get_connector, timeout_config, 
 
 class KlingMotionControl:
     def __init__(self, mode: str = "720p"):
-        self.model_id = "kling/v3-motion-control"
+        self.model_id = "kling/v2.6-motion-control"
         self.mode = mode  # "720p" или "1080p"
         self.headers = {
             "Authorization": f"Bearer {POLZA_API_KEY}",

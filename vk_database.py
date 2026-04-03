@@ -4,15 +4,16 @@ import logging
 import asyncio
 import asyncpg
 from dotenv import load_dotenv
+from app.config import settings
 
 load_dotenv()
 
 VK_DB_CONFIG = {
-    "database": os.getenv("VK_DB_NAME", "bot_vk_db"),
-    "user":     os.getenv("VK_DB_USER", "bot_vk_user"),
-    "password": os.getenv("VK_DB_PASS"),
-    "host":     os.getenv("VK_DB_HOST", "127.0.0.1"),
-    "port":     int(os.getenv("VK_DB_PORT", 5432)),
+    "database": settings.db_name,
+    "user":     settings.db_user,
+    "password": settings.db_pass,
+    "host":     settings.db_host,
+    "port":     settings.db_port,
 }
 
 _pool = None
@@ -20,54 +21,103 @@ _lock = asyncio.Lock()
 
 
 async def init_db():
-    """Инициализация пула соединений + создание таблицы если нет."""
+    """Инициализация пула соединений PostgreSQL + создание структуры таблиц."""
     global _pool
+
+    # 1. Инициализация пула (Thread-safe через Lock)
     if _pool is None:
         async with _lock:
             if _pool is None:
                 try:
+                    # Используем данные напрямую из нашего объекта настроек
                     _pool = await asyncpg.create_pool(
-                        **VK_DB_CONFIG,
+                        user=settings.db_user,
+                        password=settings.db_pass,
+                        database=settings.db_name,
+                        host=settings.db_host,
+                        port=settings.db_port,
                         min_size=2,
                         max_size=10
                     )
-                    logging.info("✅ VK DB: пул соединений создан")
+                    logging.info("✅ VK DB: пул соединений успешно создан")
                 except Exception as e:
-                    logging.error(f"❌ VK DB: ошибка подключения: {e}")
+                    logging.error(f"❌ VK DB: критическая ошибка подключения: {e}")
                     raise
 
-    # Создаём таблицу при первом запуске
+    # 2. Настройка структуры таблиц
     async with _pool.acquire() as conn:
+        # Таблица пользователей
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id     BIGINT PRIMARY KEY,
-                balance     INTEGER NOT NULL DEFAULT 17,
-                referrer_id BIGINT DEFAULT NULL,
-                created_at  TIMESTAMP DEFAULT NOW()
-            )
-        """)
-        # Проверяем и добавляем referrer_id если таблица уже есть
-        try:
-            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referrer_id BIGINT DEFAULT NULL")
-        except: pass
+                           CREATE TABLE IF NOT EXISTS users
+                           (
+                               user_id
+                               BIGINT
+                               PRIMARY
+                               KEY,
+                               balance
+                               INTEGER
+                               NOT
+                               NULL
+                               DEFAULT
+                               17,
+                               referrer_id
+                               BIGINT
+                               DEFAULT
+                               NULL,
+                               created_at
+                               TIMESTAMP
+                               DEFAULT
+                               NOW
+                           (
+                           )
+                               )
+                           """)
 
+        # Миграция: Добавляем referrer_id, если таблица создавалась ранее без него
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referrer_id BIGINT DEFAULT NULL")
+
+        # Таблица логов платежей
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS payment_logs (
-                id         SERIAL PRIMARY KEY,
-                user_id    BIGINT NOT NULL,
-                amount     INTEGER NOT NULL,
-                status     TEXT NOT NULL,
-                order_id   TEXT,
-                raw_data   JSONB,
-                created_at TIMESTAMP DEFAULT NOW()
-            )
-        """)
-        # Проверяем новые колонки в логах
-        try:
-            await conn.execute("ALTER TABLE payment_logs ADD COLUMN IF NOT EXISTS order_id TEXT")
-            await conn.execute("ALTER TABLE payment_logs ADD COLUMN IF NOT EXISTS raw_data JSONB")
-        except: pass
+                           CREATE TABLE IF NOT EXISTS payment_logs
+                           (
+                               id
+                               SERIAL
+                               PRIMARY
+                               KEY,
+                               user_id
+                               BIGINT
+                               NOT
+                               NULL,
+                               amount
+                               INTEGER
+                               NOT
+                               NULL,
+                               status
+                               TEXT
+                               NOT
+                               NULL,
+                               order_id
+                               TEXT,
+                               raw_data
+                               JSONB,
+                               created_at
+                               TIMESTAMP
+                               DEFAULT
+                               NOW
+                           (
+                           )
+                               )
+                           """)
 
+        # Миграция: Добавляем новые колонки в логи, если их не было
+        await conn.execute("ALTER TABLE payment_logs ADD COLUMN IF NOT EXISTS order_id TEXT")
+        await conn.execute("ALTER TABLE payment_logs ADD COLUMN IF NOT EXISTS raw_data JSONB")
+
+        # Создаем индексы для быстрого поиска (не выдает ошибку, если уже есть)
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_payment_logs_user_id ON payment_logs(user_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_payment_logs_order_id ON payment_logs(order_id)")
+
+    logging.info("✅ VK DB: структура таблиц проверена и готова к работе")
 
 async def close_db():
     global _pool

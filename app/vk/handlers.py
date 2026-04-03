@@ -282,11 +282,11 @@ class VKHandlers:
             return await self.handle_start(message)
 
         # --- PHOTO SESSION ---
-        elif "начать фотосессию" in text or "📸" in text:
+        elif "начать фотосессию" in text or text == "📸 начать фотосессию":
             return await self.handle_start_photo(message)
 
         # --- VIDEO SESSION ---
-        elif "оживить фото" in text or "🎬" in text:
+        elif "оживить фото" in text or text == "🎬 оживить фото":
             return await self.handle_start_video(message)
 
         # --- BALANCE ---
@@ -567,7 +567,7 @@ class VKHandlers:
 
         user_data["photo_urls"] = [photo_url]
 
-        if model == "kling_motion":
+        if "motion" in model:
             await message.answer(
                 "🎥 Шаг 2: Пришлите видео с движением:",
                 keyboard=get_cancel_keyboard()

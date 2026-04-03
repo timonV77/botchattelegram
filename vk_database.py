@@ -9,11 +9,11 @@ from app.config import settings
 load_dotenv()
 
 VK_DB_CONFIG = {
-    "database": settings.db_name,
-    "user":     settings.db_user,
-    "password": settings.db_pass,
-    "host":     settings.db_host,
-    "port":     settings.db_port,
+    "database": settings.vk_db_name,
+    "user":     settings.vk_db_user,
+    "password": settings.vk_db_pass,
+    "host":     settings.vk_db_host,
+    "port":     settings.vk_db_port,
 }
 
 _pool = None
@@ -31,11 +31,11 @@ async def init_db():
                 try:
                     # Используем данные напрямую из нашего объекта настроек
                     _pool = await asyncpg.create_pool(
-                        user=settings.db_user,
-                        password=settings.db_pass,
-                        database=settings.db_name,
-                        host=settings.db_host,
-                        port=settings.db_port,
+                        user=settings.vk_db_user,
+                        password=settings.vk_db_pass,
+                        database=settings.vk_db_name,
+                        host=settings.vk_db_host,
+                        port=settings.vk_db_port,
                         min_size=2,
                         max_size=10
                     )

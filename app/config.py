@@ -11,12 +11,19 @@ class Settings:
     bot_token: str
     polza_api_key: str
 
-    # Настройки базы данных (Добавлено!)
+    # Настройки базы данных (Telegram)
     db_name: str
     db_user: str
     db_pass: str
     db_host: str
     db_port: int
+
+    # Настройки базы данных (VK)
+    vk_db_name: str
+    vk_db_user: str
+    vk_db_pass: str
+    vk_db_host: str
+    vk_db_port: int
 
     # VK настройки
     vk_token: str = ""
@@ -52,12 +59,19 @@ def get_settings() -> Settings:
         bot_token=bot_token,
         polza_api_key=polza_key,
 
-        # Считываем переменные базы данных из .env
-        db_name=os.getenv("VK_DB_NAME", "bot_vk_db"),
-        db_user=os.getenv("VK_DB_USER", "bot_vk_user"),
-        db_pass=os.getenv("VK_DB_PASS", ""),
-        db_host=os.getenv("VK_DB_HOST", "127.0.0.1"),
-        db_port=int(os.getenv("VK_DB_PORT", 5432)),
+        # Считываем переменные базы данных из .env (Telegram)
+        db_name=os.getenv("DB_NAME", ""),
+        db_user=os.getenv("DB_USER", ""),
+        db_pass=os.getenv("DB_PASS", ""),
+        db_host=os.getenv("DB_HOST", "127.0.0.1"),
+        db_port=int(os.getenv("DB_PORT", 5432)),
+
+        # Считываем переменные базы данных из .env (VK)
+        vk_db_name=os.getenv("VK_DB_NAME", "bot_vk_db"),
+        vk_db_user=os.getenv("VK_DB_USER", "bot_vk_user"),
+        vk_db_pass=os.getenv("VK_DB_PASS", ""),
+        vk_db_host=os.getenv("VK_DB_HOST", "127.0.0.1"),
+        vk_db_port=int(os.getenv("VK_DB_PORT", 5432)),
 
         vk_token=os.getenv("VK_TOKEN", ""),
         vk_group_id=int(os.getenv("VK_GROUP_ID", 0)),

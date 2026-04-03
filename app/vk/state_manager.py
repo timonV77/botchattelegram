@@ -2,6 +2,7 @@
 import logging
 import json
 from typing import Dict, Any, Optional
+from redis.asyncio import Redis
 
 class VKStateManager:
     """Manages FSM-like states for VK users using Redis"""

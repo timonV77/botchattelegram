@@ -11,9 +11,10 @@ from app.services.models.video.kling_motion import KlingMotionControl
 import database as db
 
 COSTS = {
-    "nanabanana": 1,
-    "nanabanana_pro": 5,
-    "seedream": 2,
+    "nanabanana": 17,
+    "nanabanana_pro": 55,
+    "seedream": 26,
+    "nanabanana_2": 28,
     "kling_5": 5,
     "kling_10": 10,
     "kling_motion": 10
@@ -46,6 +47,10 @@ async def generate(
         logging.info("--- 🛠 Выбор модели фото: %s ---", model)
 
         if model == "nanabanana":
+            engine = NanoBanana()
+            return await engine.generate(prompt, image_urls=image_urls)
+
+        elif model == "nanabanana_2":
             engine = NanoBanana()
             return await engine.generate(prompt, image_urls=image_urls)
 

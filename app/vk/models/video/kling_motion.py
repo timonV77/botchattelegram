@@ -20,20 +20,26 @@ class KlingMotionControl:
         motion_video_url: видео с эталонным движением.
         orientation: 'image' (до 10с) или 'video' (до 30с).
         """
-
-        # Фикс для прямых ссылок VK, которые не заканчиваются на .mp4
-        safe_video_url = motion_video_url
-        if ".mp4" not in safe_video_url.lower():
-            safe_video_url = f"{safe_video_url}&ext=video.mp4" if "?" in safe_video_url else f"{safe_video_url}?ext=video.mp4"
-            safe_video_url += "#video.mp4"
+        
+        # Загружаем видео в память и конвертируем в Base64 Data URI для 100% совместимости
+        import base64
+        video_b64 = None
+        async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as dlsession:
+            async with dlsession.get(motion_video_url) as resp:
+                if resp.status == 200:
+                    video_bytes = await resp.read()
+                    b64_str = base64.b64encode(video_bytes).decode('utf-8')
+                    video_b64 = f"data:video/mp4;base64,{b64_str}"
+                else:
+                    logging.error(f"❌ Не удалось скачать ВК-видео. Status: {resp.status}")
+                    return None, None, None
 
         payload_input = {
             "prompt": prompt or "Character animation based on reference video",
             "mode": self.mode,
             "character_orientation": orientation,
-            # В этой модели передаем массивы объектов
             "images": [{"type": "url", "data": char_image_url}],
-            "videos": [{"type": "url", "data": safe_video_url}]
+            "videos": [{"type": "base64", "data": video_b64}]
         }
 
         payload = {

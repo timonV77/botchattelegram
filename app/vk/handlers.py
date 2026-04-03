@@ -651,7 +651,7 @@ class VKHandlers:
             return
 
         # Start generation
-        if model == "kling_motion":
+        if "motion" in model:
             motion_video_url = user_data.get("motion_video_url")
             task = asyncio.create_task(
                 background_video_gen(

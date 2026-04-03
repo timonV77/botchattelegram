@@ -38,7 +38,7 @@ def _normalize_urls(image_urls):
 
 
 class NanoBananaPro:
-    def __init__(self, is_pro: bool = False):
+    def __init__(self, is_pro: bool = True):
         self.is_pro = is_pro
         self.model_id = "google/gemini-3-pro-image-preview" if is_pro else "google/gemini-2.5-flash-image"
         self.headers = {

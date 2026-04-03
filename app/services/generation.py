@@ -51,7 +51,7 @@ async def generate(
             return await engine.generate(prompt, image_urls=image_urls)
 
         elif model == "nanabanana_2":
-            engine = NanoBanana()
+            engine = NanoBanana(version="v2")
             return await engine.generate(prompt, image_urls=image_urls)
 
         elif model == "nanabanana_pro":

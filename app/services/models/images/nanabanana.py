@@ -14,8 +14,8 @@ def _as_dict(payload):
 
 
 class NanoBanana:
-    def __init__(self, is_pro: bool = False):
-        self.model_id = "google/gemini-2.5-flash-image" if not is_pro else "google/gemini-3-pro-image-preview"
+    def __init__(self, version: str = "v1"):
+        self.model_id = "google/gemini-3.1-flash-image-preview" if version == "v2" else "google/gemini-2.5-flash-image"
         self.headers = {
             "Authorization": f"Bearer {POLZA_API_KEY}",
             "Content-Type": "application/json"

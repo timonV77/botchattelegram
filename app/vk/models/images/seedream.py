@@ -41,7 +41,7 @@ def _normalize_urls(image_urls):
 
 class Seedream:
     def __init__(self):
-        self.model_id = "bytedance/seedream-4.5"
+        self.model_id = "bytedance/seedream-5-lite"
         self.headers = {
             "Authorization": f"Bearer {POLZA_API_KEY}",
             "Content-Type": "application/json"

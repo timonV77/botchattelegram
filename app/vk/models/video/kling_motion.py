@@ -21,13 +21,19 @@ class KlingMotionControl:
         orientation: 'image' (до 10с) или 'video' (до 30с).
         """
 
+        # Фикс для прямых ссылок VK, которые не заканчиваются на .mp4
+        safe_video_url = motion_video_url
+        if ".mp4" not in safe_video_url.lower():
+            safe_video_url = f"{safe_video_url}&ext=video.mp4" if "?" in safe_video_url else f"{safe_video_url}?ext=video.mp4"
+            safe_video_url += "#video.mp4"
+
         payload_input = {
             "prompt": prompt or "Character animation based on reference video",
             "mode": self.mode,
             "character_orientation": orientation,
             # В этой модели передаем массивы объектов
             "images": [{"type": "url", "data": char_image_url}],
-            "videos": [{"type": "url", "data": motion_video_url}]
+            "videos": [{"type": "url", "data": safe_video_url}]
         }
 
         payload = {

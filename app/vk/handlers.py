@@ -18,7 +18,6 @@ from app.vk.state_manager import VKStateManager
 from app.vk.file_handler import download_vk_photo, download_vk_video, bytes_to_base64_data_uri
 from app.network import get_connector, timeout_config
 from app.vk.models.video.kling_motion import _download_vk_doc_video
-from app.vk.vk_video_resolver import resolve_vk_video_direct_url
 from app.vk.generation import (
     has_balance, charge, generate_photo as generate, generate_video, COSTS
 )
@@ -620,9 +619,6 @@ class VKHandlers:
 
         # ── Разбираем вложение ───────────────────────────────────────────────
         doc_url = None
-        vid_owner_id = None
-        vid_id = None
-        vid_access_key = None
 
         for attachment in message.attachments:
             if attachment.type == "doc" and getattr(attachment.doc, "ext", "").lower() in ["mp4", "mov", "avi", "mkv"]:
@@ -652,33 +648,60 @@ class VKHandlers:
             )
             return
 
-        # ── Верифицируем doc URL (HEAD-запрос: живой CDN или протух?) ──────────
-        await message.answer("🔄 Проверяю видеофайл...", keyboard=get_cancel_keyboard())
+        # ── Скачиваем байты СРАЗУ пока URL горячий, льём на Catbox ───────────
+        # doc.url — это редирект-ссылка VK (vk.ru/doc...), а не прямой .mp4.
+        # Kling API такой URL не принимает. Решение: скачиваем → Catbox → прямой URL.
+        await message.answer("🔄 Загружаю видео... (~30 сек)", keyboard=get_cancel_keyboard())
 
-        direct_url = await resolve_vk_video_direct_url(doc_url=doc_url)
+        try:
+            # Шаг 1: скачиваем с VK (браузерные заголовки + HTML-парсер редиректов)
+            async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as sess:
+                video_bytes = await _download_vk_doc_video(sess, doc_url)
 
-        if direct_url:
-            logger.info(f"✅ Прямая ссылка на видео получена: {direct_url[:80]}...")
-            user_data["motion_video_url"] = direct_url
-        else:
-            # CDN ссылка протухла — fallback с doc_ref для docs.getById при генерации
-            logger.warning(f"⚠️ Doc URL не прошёл проверку. Используем как fallback: {doc_url[:80]}")
-            user_data["motion_video_url"] = doc_url
-            if message.attachments and hasattr(message.attachments[0], 'doc'):
-                doc = message.attachments[0].doc
-                ref = f"{doc.owner_id}_{doc.id}"
-                ak = getattr(doc, "access_key", None)
-                if ak:
-                    ref += f"_{ak}"
-                user_data["motion_doc_ref"] = ref
+            if not video_bytes or len(video_bytes) < 1000:
+                raise RuntimeError(f"Скачано слишком мало байт: {len(video_bytes) if video_bytes else 0}")
+
+            logger.info(f"✅ Видео скачано: {len(video_bytes):,} байт. Заливаем на Catbox...")
+
+            # Шаг 2: Catbox.moe → прямая https://files.catbox.moe/*.mp4
+            form = aiohttp.FormData()
+            form.add_field("reqtype", "fileupload")
+            form.add_field("fileToUpload", video_bytes, filename="motion.mp4", content_type="video/mp4")
+
+            async with aiohttp.ClientSession(connector=get_connector()) as sess:
+                async with sess.post(
+                    "https://catbox.moe/user/api.php",
+                    data=form,
+                    timeout=aiohttp.ClientTimeout(total=120),
+                ) as resp:
+                    catbox_url = (await resp.text()).strip()
+
+            if not catbox_url.startswith("https://files.catbox.moe/"):
+                raise RuntimeError(f"Catbox ответил неожиданно: {catbox_url[:100]}")
+
+            logger.info(f"✅ Catbox URL: {catbox_url}")
+            user_data["motion_video_url"] = catbox_url
+
+        except Exception as e:
+            logger.error(f"❌ Не удалось подготовить видео: {e}")
+            await message.answer(
+                "⚠️ Не удалось скачать видео с серверов ВКонтакте.\n\n"
+                "Попробуйте:\n"
+                "• Отправить видео заново\n"
+                "• Убедитесь, что файл сохранён на устройстве (не из галереи VK)\n"
+                "• Видео не должно превышать 500 МБ",
+                keyboard=get_cancel_keyboard()
+            )
+            return
 
         await message.answer(
-            "✍️ Шаг 3: Опишите желаемое движение (или '.' для пропуска):",
+            "✅ Видео принято!\n\n✍️ Шаг 3: Опишите желаемое движение (или '.' для пропуска):",
             keyboard=get_cancel_keyboard()
         )
         await self.state.set_state(user_id, "waiting_for_prompt")
         await self.state.set_data(user_id, user_data)
         return
+
 
     async def handle_prompt(self, message: Message, user_data: dict) -> str:
         """Handle prompt input and start generation"""

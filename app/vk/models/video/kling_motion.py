@@ -39,7 +39,7 @@ class KlingMotionControl:
             async with dlsession.get(motion_video_url) as resp:
                 if resp.status == 200:
                     video_bytes = await resp.read()
-                    public_video_url = await upload_file_smart(video_bytes)
+                    public_video_url = await upload_file_smart(video_bytes, filename="motion.mp4")
                 else:
                     logging.error(f"❌ Не удалось скачать видео движения. Status: {resp.status}")
                     return None, None, None
@@ -47,6 +47,9 @@ class KlingMotionControl:
         if not public_image_url or not public_video_url:
             logging.error("❌ Не удалось подготовить публичные ссылки для генерации.")
             return None, None, None
+        
+        logging.info(f"📎 Image URL: {public_image_url}")
+        logging.info(f"📎 Video URL: {public_video_url}")
 
         payload_input = {
             "prompt": prompt or "Character animation based on reference video",

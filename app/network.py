@@ -60,20 +60,28 @@ async def upload_file_smart(file_bytes: bytes, filename: str = None) -> Optional
             return url
         logging.warning("⚠️ Telegraph не справился, пробуем Catbox в качестве запаски...")
     
-    return await upload_file_to_catbox(file_bytes)
+    return await upload_file_to_catbox(file_bytes, filename=filename)
 
 
-async def upload_file_to_catbox(file_bytes: bytes) -> Optional[str]:
+async def upload_file_to_catbox(file_bytes: bytes, filename: str = None) -> Optional[str]:
     """Upload larger files (up to 200MB) to Catbox.moe"""
     try:
+        # Определяем тип файла по имени
+        if filename and filename.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+            upload_filename = filename
+            content_type = 'image/jpeg' if filename.lower().endswith(('.jpg', '.jpeg')) else 'image/png'
+        else:
+            upload_filename = filename or 'motion_ref.mp4'
+            content_type = 'video/mp4'
+        
         form = aiohttp.FormData()
         form.add_field('reqtype', 'fileupload')
-        form.add_field('fileToUpload', file_bytes, filename='motion_ref.mp4', content_type='video/mp4')
+        form.add_field('fileToUpload', file_bytes, filename=upload_filename, content_type=content_type)
         
         # Увеличиваем таймаут для тяжелых видео до 600 секунд
         timeout = aiohttp.ClientTimeout(total=600, connect=30, sock_read=300)
         async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout) as session:
-            logging.info("📤 Загрузка видео в Catbox.moe...")
+            logging.info(f"📤 Загрузка файла в Catbox.moe ({upload_filename})...")
             async with session.post('https://catbox.moe/user/api.php', data=form) as resp:
                 if resp.status == 200:
                     url = await resp.text()

@@ -600,15 +600,21 @@ class VKHandlers:
         for attachment in message.attachments:
             if attachment.type == "doc" and getattr(attachment.doc, "ext", "").lower() in ["mp4", "mov", "avi", "mkv"]:
                 video_url = attachment.doc.url
+                logger.info(f"📹 VK doc video URL: {video_url}")
                 break
             elif attachment.type == "video":
-                # Fallback, но это может быть ссылка на плеер
-                video_url = attachment.video.player
-                break
+                # video.player — это HTML-плеер, а не прямая ссылка на файл
+                logger.warning(f"⚠️ VK video attachment detected (player URL, not raw file). Rejecting.")
+                await message.answer(
+                    "⚠️ Видео нужно отправить именно как **Документ** (📎 → Файл).\n\n"
+                    "Обычное видео ВК нельзя использовать — оно не даёт прямую ссылку на файл.",
+                    keyboard=get_cancel_keyboard()
+                )
+                return
 
         if not video_url:
             await message.answer(
-                "⚠️ Не удалось получить видео. Пожалуйста, отправьте видео **как Документ (Файл)**.",
+                "⚠️ Не удалось получить видео. Пожалуйста, отправьте видео **как Документ (📎 → Файл)**.",
                 keyboard=get_cancel_keyboard()
             )
             return

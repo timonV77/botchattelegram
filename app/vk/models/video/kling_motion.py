@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import aiohttp
-from app.network import BASE_URL, POLZA_API_KEY, get_connector, timeout_config, _download_content_bytes
+from app.network import BASE_URL, POLZA_API_KEY, get_connector, timeout_config, _download_content_bytes, upload_file_to_host
 
 
 class KlingMotionControl:
@@ -21,25 +21,28 @@ class KlingMotionControl:
         orientation: 'image' (до 10с) или 'video' (до 30с).
         """
         
-        # Загружаем видео в память и конвертируем в Base64 Data URI для 100% совместимости
-        import base64
-        video_b64 = None
+        # 1. Скачиваем видео и заливаем на Telegraph для публичной ссылки
+        # (API Polza.ai / Kling предпочитает URL для видео вместо Base64)
+        public_video_url = None
         async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as dlsession:
             async with dlsession.get(motion_video_url) as resp:
                 if resp.status == 200:
                     video_bytes = await resp.read()
-                    b64_str = base64.b64encode(video_bytes).decode('utf-8')
-                    video_b64 = f"data:video/mp4;base64,{b64_str}"
+                    public_video_url = await upload_file_to_host(video_bytes, filename="motion_ref.mp4")
                 else:
                     logging.error(f"❌ Не удалось скачать ВК-видео. Status: {resp.status}")
                     return None, None, None
+
+        if not public_video_url:
+            logging.error("❌ Не удалось получить публичную ссылку на видео.")
+            return None, None, None
 
         payload_input = {
             "prompt": prompt or "Character animation based on reference video",
             "mode": self.mode,
             "character_orientation": orientation,
             "images": [{"type": "url", "data": char_image_url}],
-            "videos": [{"type": "base64", "data": video_b64}]
+            "videos": [{"type": "url", "data": public_video_url}]
         }
 
         payload = {

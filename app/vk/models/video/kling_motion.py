@@ -41,8 +41,8 @@ class KlingMotionControl:
             "prompt": prompt or "Character animation based on reference video",
             "mode": self.mode,
             "character_orientation": orientation,
-            "images": [{"type": "url", "data": char_image_url}],
-            "videos": [{"type": "url", "data": public_video_url}]
+            "images": [char_image_url],
+            "videos": [public_video_url]
         }
 
         payload = {

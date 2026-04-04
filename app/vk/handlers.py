@@ -618,12 +618,14 @@ class VKHandlers:
         video_url = None
         doc_owner_id = None
         doc_id = None
+        doc_access_key = None
         for attachment in message.attachments:
             if attachment.type == "doc" and getattr(attachment.doc, "ext", "").lower() in ["mp4", "mov", "avi", "mkv"]:
                 video_url = attachment.doc.url
                 doc_owner_id = attachment.doc.owner_id
                 doc_id = attachment.doc.id
-                logger.info(f"📹 VK doc: owner={doc_owner_id}, id={doc_id}, url={video_url}")
+                doc_access_key = getattr(attachment.doc, "access_key", None)
+                logger.info(f"📹 VK doc: owner={doc_owner_id}, id={doc_id}, url={video_url}, access_key={doc_access_key}")
                 break
             elif attachment.type == "video":
                 # video.player — это HTML-плеер, а не прямая ссылка на файл
@@ -660,17 +662,23 @@ class VKHandlers:
                     logger.warning("⚠️ Не удалось загрузить видео заранее, будем пробовать позже")
                     user_data["motion_video_url"] = video_url
                     if doc_owner_id and doc_id:
-                        user_data["motion_doc_ref"] = f"{doc_owner_id}_{doc_id}"
+                        ref = f"{doc_owner_id}_{doc_id}"
+                        if doc_access_key: ref += f"_{doc_access_key}"
+                        user_data["motion_doc_ref"] = ref
             else:
                 logger.warning("⚠️ Не удалось скачать видео сразу, будем пробовать позже")
                 user_data["motion_video_url"] = video_url
                 if doc_owner_id and doc_id:
-                    user_data["motion_doc_ref"] = f"{doc_owner_id}_{doc_id}"
+                    ref = f"{doc_owner_id}_{doc_id}"
+                    if doc_access_key: ref += f"_{doc_access_key}"
+                    user_data["motion_doc_ref"] = ref
         except Exception as e:
             logger.error(f"❌ Ошибка предзагрузки видео: {e}")
             user_data["motion_video_url"] = video_url
             if doc_owner_id and doc_id:
-                user_data["motion_doc_ref"] = f"{doc_owner_id}_{doc_id}"
+                ref = f"{doc_owner_id}_{doc_id}"
+                if doc_access_key: ref += f"_{doc_access_key}"
+                user_data["motion_doc_ref"] = ref
 
         await message.answer(
             "✍️ Шаг 3: Описание (или '.' для пропуска):",

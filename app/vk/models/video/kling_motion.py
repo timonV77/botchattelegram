@@ -79,7 +79,32 @@ async def _download_vk_doc_video(session: aiohttp.ClientSession, url: str) -> by
                     data = await resp.read()
 
                     if "text/html" in ct:
-                        logging.warning(f"⚠️ VK doc URL вернул HTML ({len(data)} bytes), пробуем другую стратегию...")
+                        import re
+                        html_text = data.decode("utf-8", errors="ignore")
+                        # Try to find iframe src or meta refresh or any direct link, typically psv4.userapi.com or docs.vk.com
+                        match = re.search(r'(?:src|href|URL)=[\'"]?(https://[^\s\'"]+psv4\.userapi\.com[^\s\'"]+)[\'"]?', html_text)
+                        if not match:
+                            # VK also uses other doc domains for direct file delivery
+                            match = re.search(r'(?:src|href|URL)=[\'"]?(https://[^\s\'"]+\.vk\.com/doc[^\s\'"]+)[\'"]?', html_text)
+                        
+                        if match:
+                            real_url = match.group(1).replace("&amp;", "&")
+                            logging.info(f"🔄 Extracted real URL from VK HTML: {real_url[:80]}...")
+                            try:
+                                async with session.get(real_url, headers=headers, allow_redirects=True) as real_resp:
+                                    if real_resp.status == 200:
+                                        data = await real_resp.read()
+                                        new_ct = real_resp.headers.get("Content-Type", "").lower()
+                                        if "text/html" not in new_ct and len(data) >= 1000:
+                                            if _is_video_bytes(data):
+                                                logging.info(f"✅ VK doc video скачан после парсинга HTML: {len(data)} bytes")
+                                                return data
+                                            logging.info(f"📥 VK doc скачан после парсинга ({len(data)} bytes), принимаем без magic bytes")
+                                            return data
+                            except Exception as e:
+                                logging.warning(f"⚠️ Ошибка при скачивании по извлеченному ссылке: {e}")
+                        
+                        logging.warning(f"⚠️ VK doc URL вернул HTML ({len(data)} bytes), парсинг не помог, пробуем другую стратегию...")
                         continue
 
                     if not data or len(data) < 1000:

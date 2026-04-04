@@ -3,6 +3,7 @@ import logging
 import asyncio
 import traceback
 import json
+import aiohttp
 from typing import Optional, List
 from vkbottle.bot import Bot, Message
 from vkbottle import PhotoMessageUploader, VideoUploader

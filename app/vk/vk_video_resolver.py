@@ -34,30 +34,9 @@ logger = logging.getLogger(__name__)
 # Работает только для видео, загруженных через user_token владельца.
 # Для чужих/пересланных видео поле files будет отсутствовать.
 # ─────────────────────────────────────────────────────────────────
-async def _resolve_via_vk_api(
-    owner_id: int,
-    video_id: int,
-    access_key: Optional[str] = None,
-) -> Optional[str]:
-    """
-    Запрашивает video.get с user_token и возвращает прямую mp4 ссылку из files.
-    Требует VK_USER_TOKEN в .env (личный токен пользователя VK, не группы).
-    """
-    user_token = settings.vk_user_token
-    if not user_token:
-        logger.warning("⚠️  VK_USER_TOKEN не задан — стратегия VK API пропущена.")
-        return None
-
-    video_ref = f"{owner_id}_{video_id}"
-    if access_key:
-        video_ref += f"_{access_key}"
-
-    params = {
-        "videos": video_ref,
-        "access_token": user_token,
-        "v": "5.199",
-    }
-
+async def _try_video_get(token: str, video_ref: str) -> Optional[str]:
+    """Один запрос video.get с заданным токеном. Возвращает прямую mp4 URL или None."""
+    params = {"videos": video_ref, "access_token": token, "v": "5.199"}
     try:
         async with aiohttp.ClientSession(connector=get_connector()) as session:
             async with session.get(
@@ -69,39 +48,66 @@ async def _resolve_via_vk_api(
 
         if "error" in data:
             err = data["error"]
-            logger.warning(
-                f"⚠️  VK API video.get error {err.get('error_code')}: {err.get('error_msg')}"
-            )
+            logger.warning(f"⚠️  video.get error {err.get('error_code')}: {err.get('error_msg')}")
             return None
 
         items = data.get("response", {}).get("items", [])
         if not items:
-            logger.warning("⚠️  VK API video.get вернул пустой items.")
+            logger.warning("⚠️  video.get: items пустой.")
             return None
 
         files: dict = items[0].get("files") or {}
         if not files:
-            # files отсутствует — скорее всего, чужое/приватное видео
-            player_url = items[0].get("player", "")
-            logger.warning(
-                f"⚠️  VK API: поле files отсутствует. player={player_url[:80]!r}. "
-                "Это нормально для чужих/пересланных видео. Переходим к yt-dlp."
-            )
+            player = items[0].get("player", "")
+            logger.warning(f"⚠️  video.get: поле files отсутствует. player={player[:60]!r}")
             return None
 
-        # Выбираем наилучшее разрешение
         for quality in ("mp4_1080", "mp4_720", "mp4_480", "mp4_360", "mp4_240"):
             url = files.get(quality)
             if url:
-                logger.info(f"✅ VK API: прямая ссылка ({quality}): {url[:80]}...")
+                logger.info(f"✅ VK API video.get ({quality}): получена прямая ссылка.")
                 return url
 
-        logger.warning(f"⚠️  VK API: files есть, но нет mp4 ссылок. files keys: {list(files.keys())}")
+        logger.warning(f"⚠️  video.get: files есть, но нет mp4. keys={list(files.keys())}")
+        return None
+    except Exception as e:
+        logger.error(f"❌ video.get exception: {e}")
         return None
 
-    except Exception as e:
-        logger.error(f"❌ VK API video.get exception: {e}")
-        return None
+
+async def _resolve_via_vk_api(
+    owner_id: int,
+    video_id: int,
+    access_key: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Пробует video.get с user_token, затем с group token.
+    Поле files (с прямыми mp4 URL) доступно только для видео, загруженных
+    через API (не публичных/чужих). Для пересланных видео вернёт None.
+    """
+    video_ref = f"{owner_id}_{video_id}"
+    if access_key:
+        video_ref += f"_{access_key}"
+
+    # Попытка 1: user token (личный аккаунт)
+    user_token = settings.vk_user_token
+    if user_token:
+        url = await _try_video_get(user_token, video_ref)
+        if url:
+            return url
+        logger.info("ℹ️  user_token не дал results. Пробуем group token...")
+    else:
+        logger.warning("⚠️  VK_USER_TOKEN не задан.")
+
+    # Попытка 2: group/bot token (тот же токен, что использует бот)
+    group_token = settings.vk_token
+    if group_token:
+        url = await _try_video_get(group_token, video_ref)
+        if url:
+            return url
+        logger.info("ℹ️  group_token тоже не дал files — видео приватное или ограниченное.")
+
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -146,9 +152,14 @@ async def _resolve_via_ytdlp(vk_video_url: str) -> Optional[str]:
                 info = ydl.extract_info(url, download=False)
                 if not info:
                     return None
-                # Если это плейлист/список — берём первый
                 if "entries" in info:
-                    info = info["entries"][0]
+                    info = list(info["entries"])[0]
+                # Пробуем сначала formats, потом url
+                formats = info.get("formats") or []
+                for fmt in reversed(formats):  # reversed = лучшее качество в конце
+                    fmt_url = fmt.get("url", "")
+                    if fmt_url and fmt.get("ext") == "mp4" and "m3u8" not in fmt_url:
+                        return fmt_url
                 return info.get("url")
         except Exception as e:
             logger.warning(f"⚠️  yt-dlp extract_info error: {e}")

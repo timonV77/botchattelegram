@@ -589,7 +589,10 @@ class VKHandlers:
 
         if "motion" in model:
             await message.answer(
-                "🎥 Шаг 2: Пришлите видео с движением:",
+                "🎥 Шаг 2: Пришлите видео с движением\n\n"
+                "⚠️ Важно: отправьте видео как Файл, иначе ВКонтакте заблокирует доступ к нему.\n\n"
+                "Как отправить файл:\n"
+                "📎 → Файл → выберите видео (.mp4) на вашем устройстве",
                 keyboard=get_cancel_keyboard()
             )
             await self.state.set_state(user_id, "waiting_for_motion_video")
@@ -609,7 +612,8 @@ class VKHandlers:
 
         if not message.attachments:
             await message.answer(
-                "⚠️ Пожалуйста, пришлите видео.",
+                "⚠️ Пожалуйста, пришлите видео.\n\n"
+                "📎 Нажмите → Файл → выберите .mp4 с устройства",
                 keyboard=get_cancel_keyboard()
             )
             return
@@ -629,39 +633,38 @@ class VKHandlers:
                 )
                 break
             elif attachment.type == "video":
-                vid_owner_id = attachment.video.owner_id
-                vid_id = attachment.video.id
-                vid_access_key = getattr(attachment.video, "access_key", None)
-                logger.info(f"📹 VK video: owner={vid_owner_id}, id={vid_id}, access_key={vid_access_key}")
-                break
+                # Нативное VK-видео — ВК не даёт прямой URL для чужих аккаунтов.
+                # Сразу просим переслать файлом.
+                logger.info(f"📹 VK native video detected — rejecting, asking for file upload")
+                await message.answer(
+                    "❌ Вы отправили видео как нативное VK-видео.\n\n"
+                    "ВКонтакте блокирует прямой доступ к таким видео — бот не сможет его обработать.\n\n"
+                    "📎 Пожалуйста, отправьте то же видео как Файл:\n"
+                    "Нажмите скрепку 📎 → Файл → выберите .mp4 с вашего устройства",
+                    keyboard=get_cancel_keyboard()
+                )
+                return  # Ждём повторной отправки, состояние сохранено
 
-        if not doc_url and not vid_owner_id:
+        if not doc_url:
             await message.answer(
-                "⚠️ Не удалось получить видео. Отправьте видео как **Видео** или **Документ (📎 → Файл)**.",
+                "⚠️ Не удалось получить видео.\n\n📎 Нажмите → Файл → выберите .mp4 с устройства",
                 keyboard=get_cancel_keyboard()
             )
             return
 
-        # ── Резолвим прямую ссылку (каскад из 3 стратегий) ───────────────────
-        await message.answer("🔄 Получаю прямую ссылку на видео...", keyboard=get_cancel_keyboard())
+        # ── Верифицируем doc URL (HEAD-запрос: живой CDN или протух?) ──────────
+        await message.answer("🔄 Проверяю видеофайл...", keyboard=get_cancel_keyboard())
 
-        direct_url = await resolve_vk_video_direct_url(
-            owner_id=vid_owner_id,
-            video_id=vid_id,
-            access_key=vid_access_key,
-            doc_url=doc_url,
-        )
+        direct_url = await resolve_vk_video_direct_url(doc_url=doc_url)
 
         if direct_url:
             logger.info(f"✅ Прямая ссылка на видео получена: {direct_url[:80]}...")
             user_data["motion_video_url"] = direct_url
         else:
-            # Последний fallback — передаём сырой URL и надеемся на docs.getById при генерации
-            fallback_url = doc_url or f"https://vk.com/video{vid_owner_id}_{vid_id}"
-            logger.warning(f"⚠️ Прямую ссылку получить не удалось. Используем fallback: {fallback_url[:80]}")
-            user_data["motion_video_url"] = fallback_url
-            # Сохраняем doc_ref для docs.getById в background_video_gen
-            if doc_url and hasattr(message.attachments[0], 'doc'):
+            # CDN ссылка протухла — fallback с doc_ref для docs.getById при генерации
+            logger.warning(f"⚠️ Doc URL не прошёл проверку. Используем как fallback: {doc_url[:80]}")
+            user_data["motion_video_url"] = doc_url
+            if message.attachments and hasattr(message.attachments[0], 'doc'):
                 doc = message.attachments[0].doc
                 ref = f"{doc.owner_id}_{doc.id}"
                 ak = getattr(doc, "access_key", None)
@@ -670,7 +673,7 @@ class VKHandlers:
                 user_data["motion_doc_ref"] = ref
 
         await message.answer(
-            "✍️ Шаг 3: Описание (или '.' для пропуска):",
+            "✍️ Шаг 3: Опишите желаемое движение (или '.' для пропуска):",
             keyboard=get_cancel_keyboard()
         )
         await self.state.set_state(user_id, "waiting_for_prompt")

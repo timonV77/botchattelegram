@@ -4,6 +4,105 @@ import aiohttp
 from app.network import BASE_URL, POLZA_API_KEY, get_connector, timeout_config, _download_content_bytes, upload_file_smart
 
 
+
+# VK doc video download strategies
+_VK_DOC_DOWNLOAD_HEADERS = [
+    # Стратегия 1: Прямой запрос как из браузера (navigate)
+    {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Upgrade-Insecure-Requests": "1",
+        "Referer": "https://vk.com/",
+    },
+    # Стратегия 2: Как fetch-запрос видеоэлемента
+    {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5",
+        "Accept-Language": "ru-RU,ru;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Sec-Fetch-Dest": "video",
+        "Sec-Fetch-Mode": "no-cors",
+        "Sec-Fetch-Site": "cross-site",
+        "Referer": "https://vk.com/",
+    },
+]
+
+_VIDEO_MAGIC_BYTES = [
+    b"\x00\x00\x00",   # MP4/MOV ISO base media
+    b"ftyp",            # MP4 ftyp box
+    b"\x1a\x45\xdf\xa3",  # WebM/MKV
+    b"RIFF",            # AVI
+    b"OggS",            # OGG
+]
+
+
+def _is_video_bytes(data: bytes) -> bool:
+    """Проверяем magic bytes — это действительно видео-файл?"""
+    if not data or len(data) < 16:
+        return False
+    # Проверяем первые 12 байт
+    for magic in _VIDEO_MAGIC_BYTES:
+        if data[:len(magic)] == magic:
+            return True
+    # MP4: 'ftyp' может быть на offsets 4-8
+    if b"ftyp" in data[:20]:
+        return True
+    return False
+
+
+async def _download_vk_doc_video(session: aiohttp.ClientSession, url: str) -> bytes | None:
+    """
+    Умное скачивание VK-документа с видео.
+    VK хранит документы на CDN, но URL vk.ru/doc... может редиректить на HTML.
+    Пробуем несколько стратегий с разными заголовками.
+    """
+    urls_to_try = [url]
+
+    # Если URL на vk.ru — пробуем также vk.com версию
+    if "vk.ru/doc" in url:
+        urls_to_try.append(url.replace("vk.ru/doc", "vk.com/doc"))
+
+    for try_url in urls_to_try:
+        for headers in _VK_DOC_DOWNLOAD_HEADERS:
+            try:
+                async with session.get(try_url, headers=headers, allow_redirects=True, max_redirects=10) as resp:
+                    if resp.status != 200:
+                        logging.warning(f"⚠️ VK doc download status={resp.status} for {try_url[:80]}")
+                        continue
+
+                    ct = resp.headers.get("Content-Type", "").lower()
+                    data = await resp.read()
+
+                    if "text/html" in ct:
+                        logging.warning(f"⚠️ VK doc URL вернул HTML ({len(data)} bytes), пробуем другую стратегию...")
+                        continue
+
+                    if not data or len(data) < 1000:
+                        logging.warning(f"⚠️ VK doc слишком маленький ({len(data)} bytes), пробуем другую стратегию...")
+                        continue
+
+                    if _is_video_bytes(data):
+                        logging.info(f"✅ VK doc video скачан: {len(data)} bytes (strategy: {headers.get('Sec-Fetch-Dest', '?')})")
+                        return data
+
+                    # Данные пришли, но magic bytes не совпали — всё равно используем
+                    # (разные контейнеры могут иметь другие сигнатуры)
+                    logging.info(f"📥 VK doc скачан ({len(data)} bytes, ct={ct}) — принимаем без magic bytes валидации")
+                    return data
+
+            except Exception as e:
+                logging.warning(f"⚠️ VK doc стратегия упала: {e}")
+                continue
+
+    logging.error(f"❌ Все стратегии скачивания VK doc исчерпаны. URL: {url[:120]}")
+    return None
+
+
 class KlingMotionControl:
     def __init__(self, mode: str = "720p"):
         self.model_id = "kling/v2.6-motion-control"
@@ -23,17 +122,22 @@ class KlingMotionControl:
         public_image_url = None
         public_video_url = None
 
-        # Браузерные заголовки для обхода защиты VK
+        # Полный набор браузерных заголовков для обхода защиты VK
         vk_headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Referer": "https://vk.com/",
-            "Accept": "*/*",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Upgrade-Insecure-Requests": "1",
         }
 
-        async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config, headers=vk_headers) as dlsession:
+        async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as dlsession:
             # 1. Скачиваем и перезаливаем фото персонажа
             try:
-                async with dlsession.get(char_image_url) as resp:
+                async with dlsession.get(char_image_url, headers=vk_headers) as resp:
                     if resp.status == 200:
                         img_bytes = await resp.read()
                         ct = resp.headers.get("Content-Type", "").lower()
@@ -51,30 +155,21 @@ class KlingMotionControl:
                 logging.error(f"❌ Ошибка при скачивании фото: {e}")
                 return None, None, None
 
-            # 2. Скачиваем и перезаливаем видео (с браузерными заголовками для VK doc URL)
-            try:
-                async with dlsession.get(motion_video_url) as resp:
-                    if resp.status == 200:
-                        video_bytes = await resp.read()
-                        ct = resp.headers.get("Content-Type", "").lower()
-                        logging.info(f"📥 Video downloaded: {len(video_bytes)} bytes, content-type: {ct}")
+            # 2. Скачиваем и перезаливаем видео
+            if "vk.com" not in motion_video_url and "vk.ru" not in motion_video_url:
+                # Уже предзагруженное видео на публичный хостинг
+                logging.info(f"✅ Видео уже на публичном хостинге: {motion_video_url}")
+                public_video_url = motion_video_url
+            else:
+                # VK doc URL (vk.ru/doc...) может возвращать HTML без правильных заголовков
+                video_bytes = await _download_vk_doc_video(dlsession, motion_video_url)
+                if video_bytes is None:
+                    return None, None, None
 
-                        # Проверяем что это видео, а не HTML-страница
-                        if "text/html" in ct:
-                            logging.error(f"❌ Видео URL вернул HTML! Нужны другие заголовки или URL устарел. URL: {motion_video_url[:120]}")
-                            return None, None, None
-
-                        if not video_bytes or len(video_bytes) < 1000:
-                            logging.error(f"❌ Видео слишком маленькое ({len(video_bytes)} bytes)")
-                            return None, None, None
-
-                        public_video_url = await upload_file_smart(video_bytes, filename="motion.mp4")
-                    else:
-                        logging.error(f"❌ Не удалось скачать видео. Status: {resp.status}")
-                        return None, None, None
-            except Exception as e:
-                logging.error(f"❌ Ошибка при скачивании видео: {e}")
-                return None, None, None
+                public_video_url = await upload_file_smart(video_bytes, filename="motion.mp4")
+                if not public_video_url:
+                    logging.error("❌ Не удалось загрузить видео на хостинг.")
+                    return None, None, None
 
         if not public_image_url or not public_video_url:
             logging.error("❌ Не удалось подготовить публичные ссылки.")

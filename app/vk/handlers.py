@@ -16,6 +16,8 @@ from app.vk.keyboards import (
 )
 from app.vk.state_manager import VKStateManager
 from app.vk.file_handler import download_vk_photo, download_vk_video, bytes_to_base64_data_uri
+from app.network import upload_file_smart
+from app.vk.models.video.kling_motion import _download_vk_doc_video
 from app.vk.generation import (
     has_balance, charge, generate_photo as generate, generate_video, COSTS
 )
@@ -640,9 +642,35 @@ class VKHandlers:
             )
             return
 
-        user_data["motion_video_url"] = video_url
-        if doc_owner_id and doc_id:
-            user_data["motion_doc_ref"] = f"{doc_owner_id}_{doc_id}"
+        # Сразу скачиваем и перезаливаем видео на публичный хостинг,
+        # пока URL ещё "горячий" и не требует авторизации VK
+        import aiohttp
+        from app.network import get_connector, timeout_config
+        await message.answer("🔄 Принимаю видео...", keyboard=get_cancel_keyboard())
+        try:
+            async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as sess:
+                video_bytes = await _download_vk_doc_video(sess, video_url)
+            if video_bytes:
+                public_video_url = await upload_file_smart(video_bytes, filename="motion.mp4")
+                if public_video_url:
+                    logger.info(f"✅ Видео загружено заранее: {public_video_url}")
+                    user_data["motion_video_url"] = public_video_url
+                    user_data["motion_video_pre_uploaded"] = True
+                else:
+                    logger.warning("⚠️ Не удалось загрузить видео заранее, будем пробовать позже")
+                    user_data["motion_video_url"] = video_url
+                    if doc_owner_id and doc_id:
+                        user_data["motion_doc_ref"] = f"{doc_owner_id}_{doc_id}"
+            else:
+                logger.warning("⚠️ Не удалось скачать видео сразу, будем пробовать позже")
+                user_data["motion_video_url"] = video_url
+                if doc_owner_id and doc_id:
+                    user_data["motion_doc_ref"] = f"{doc_owner_id}_{doc_id}"
+        except Exception as e:
+            logger.error(f"❌ Ошибка предзагрузки видео: {e}")
+            user_data["motion_video_url"] = video_url
+            if doc_owner_id and doc_id:
+                user_data["motion_doc_ref"] = f"{doc_owner_id}_{doc_id}"
 
         await message.answer(
             "✍️ Шаг 3: Описание (или '.' для пропуска):",

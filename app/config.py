@@ -39,6 +39,7 @@ class Settings:
     redis_port: int = 6379
     webhook_port: int = 8443
     prodamus_key: str = ""
+    vk_user_token: str = ""
 
 
 def get_settings() -> Settings:
@@ -85,7 +86,8 @@ def get_settings() -> Settings:
         redis_host=os.getenv("REDIS_HOST", "localhost"),
         redis_port=int(os.getenv("REDIS_PORT", 6379)),
         webhook_port=int(os.getenv("WEBHOOK_PORT", 8443)),
-        prodamus_key=os.getenv("PRODAMUS_KEY", "")
+        prodamus_key=os.getenv("PRODAMUS_KEY", ""),
+        vk_user_token=os.getenv("VK_USER_TOKEN", "")
     )
 
 

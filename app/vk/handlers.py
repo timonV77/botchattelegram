@@ -154,6 +154,7 @@ async def background_video_gen(
     model: str,
     motion_video_url: Optional[str] = None,
     motion_doc_ref: Optional[str] = None,
+    vk_video_id: Optional[str] = None,
 ):
     """Background video generation task"""
     try:
@@ -174,6 +175,17 @@ async def background_video_gen(
                     logger.warning("⚠️ VK API docs.getById returned empty, using original URL")
             except Exception as e:
                 logger.error(f"⚠️ VK API docs.getById failed: {e}, using original URL")
+
+        # Если это видео-вложение из ВК (не документ)
+        if vk_video_id:
+            from app.vk.video_proxy import get_direct_video_and_upload
+            logger.info(f"🔄 Извлечение прямой ссылки для видео {vk_video_id}...")
+            catbox_url = await get_direct_video_and_upload(vk_video_id)
+            if catbox_url:
+                logger.info(f"✅ Итоговая прямая ссылка для Kling: {catbox_url}")
+                motion_video_url = catbox_url
+            else:
+                logger.warning("⚠️ Не удалось получить ссылку через proxy, используем исходный URL")
 
         result = await generate_video(photo_url, final_prompt, model, motion_video_url=motion_video_url)
 
@@ -628,10 +640,13 @@ class VKHandlers:
                 logger.info(f"📹 VK doc: owner={doc_owner_id}, id={doc_id}, url={video_url}, access_key={doc_access_key}")
                 break
             elif attachment.type == "video":
-                video_url = f"https://vk.com/video{attachment.video.owner_id}_{attachment.video.id}"
+                video_id = f"{attachment.video.owner_id}_{attachment.video.id}"
+                video_url = f"https://vk.com/video{video_id}"
                 if getattr(attachment.video, "access_key", None):
+                    video_id += f"_{attachment.video.access_key}"
                     video_url += f"_{attachment.video.access_key}"
-                logger.info(f"📹 VK video passed directly: {video_url}")
+                logger.info(f"📹 VK video ID passed directly: {video_id}")
+                user_data["vk_video_id"] = video_id
                 user_data["motion_video_url"] = video_url
                 user_data["motion_video_pre_uploaded"] = True
                 pre_uploaded_video = True
@@ -724,6 +739,7 @@ class VKHandlers:
         if "motion" in model:
             motion_video_url = user_data.get("motion_video_url")
             motion_doc_ref = user_data.get("motion_doc_ref")
+            vk_video_id = user_data.get("vk_video_id")
             task = asyncio.create_task(
                 background_video_gen(
                     self.bot,
@@ -732,7 +748,8 @@ class VKHandlers:
                     prompt,
                     model,
                     motion_video_url=motion_video_url,
-                    motion_doc_ref=motion_doc_ref
+                    motion_doc_ref=motion_doc_ref,
+                    vk_video_id=vk_video_id
                 )
             )
             time_msg = "⏳ Магия началась! Motion Control занимает 7-12 минут."

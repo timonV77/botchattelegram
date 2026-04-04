@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import aiohttp
-from app.network import BASE_URL, POLZA_API_KEY, get_connector, timeout_config, _download_content_bytes, upload_file_to_host
+from app.network import BASE_URL, POLZA_API_KEY, get_connector, timeout_config, _download_content_bytes, upload_file_to_catbox
 
 
 class KlingMotionControl:
@@ -21,14 +21,14 @@ class KlingMotionControl:
         orientation: 'image' (до 10с) или 'video' (до 30с).
         """
         
-        # 1. Скачиваем видео и заливаем на Telegraph для публичной ссылки
-        # (API Polza.ai / Kling предпочитает URL для видео вместо Base64)
+        # 1. Скачиваем видео и заливаем на Catbox для публичной ссылки
+        # (API Polza.ai / Kling предпочитает URL для видео вместо Base64. Catbox надежнее для видео > 5МБ)
         public_video_url = None
         async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as dlsession:
             async with dlsession.get(motion_video_url) as resp:
                 if resp.status == 200:
                     video_bytes = await resp.read()
-                    public_video_url = await upload_file_to_host(video_bytes, filename="motion_ref.mp4")
+                    public_video_url = await upload_file_to_catbox(video_bytes)
                 else:
                     logging.error(f"❌ Не удалось скачать ВК-видео. Status: {resp.status}")
                     return None, None, None

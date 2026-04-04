@@ -16,7 +16,7 @@ from app.vk.keyboards import (
 )
 from app.vk.state_manager import VKStateManager
 from app.vk.file_handler import download_vk_photo, download_vk_video, bytes_to_base64_data_uri
-from app.network import upload_file_smart
+from app.network import get_connector, timeout_config
 from app.vk.models.video.kling_motion import _download_vk_doc_video
 from app.vk.generation import (
     has_balance, charge, generate_photo as generate, generate_video, COSTS
@@ -653,13 +653,16 @@ class VKHandlers:
             async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as sess:
                 video_bytes = await _download_vk_doc_video(sess, video_url)
             if video_bytes:
-                public_video_url = await upload_file_smart(video_bytes, filename="motion.mp4")
-                if public_video_url:
-                    logger.info(f"✅ Видео загружено заранее: {public_video_url}")
+                try:
+                    from vkbottle import VideoUploader
+                    video_uploader = VideoUploader(self.bot.api)
+                    attachment = await video_uploader.upload(file_source=video_bytes, name="motion_ref.mp4")
+                    public_video_url = f"https://vk.com/{attachment}"
+                    logger.info(f"✅ Видео загружено в VK video.save: {public_video_url}")
                     user_data["motion_video_url"] = public_video_url
                     user_data["motion_video_pre_uploaded"] = True
-                else:
-                    logger.warning("⚠️ Не удалось загрузить видео заранее, будем пробовать позже")
+                except Exception as up_err:
+                    logger.warning(f"⚠️ Ошибка загрузки видео в VK: {up_err}, fallback to doc URL")
                     user_data["motion_video_url"] = video_url
                     if doc_owner_id and doc_id:
                         ref = f"{doc_owner_id}_{doc_id}"

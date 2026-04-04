@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import aiohttp
-from app.network import BASE_URL, POLZA_API_KEY, get_connector, timeout_config, _download_content_bytes, upload_file_smart
+from app.network import BASE_URL, POLZA_API_KEY, get_connector, timeout_config, _download_content_bytes
 
 
 
@@ -144,64 +144,16 @@ class KlingMotionControl:
         motion_video_url: видео с эталонным движением (уже свежий URL через VK API).
         orientation: 'image' (до 10с) или 'video' (до 30с).
         """
-        public_image_url = None
-        public_video_url = None
-
-        # Полный набор браузерных заголовков для обхода защиты VK
-        vk_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-            "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Upgrade-Insecure-Requests": "1",
-        }
-
-        async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as dlsession:
-            # 1. Скачиваем и перезаливаем фото персонажа
-            try:
-                async with dlsession.get(char_image_url, headers=vk_headers) as resp:
-                    if resp.status == 200:
-                        img_bytes = await resp.read()
-                        ct = resp.headers.get("Content-Type", "").lower()
-                        logging.info(f"📥 Image downloaded: {len(img_bytes)} bytes, content-type: {ct}")
-
-                        if not img_bytes or len(img_bytes) < 500:
-                            logging.error(f"❌ Фото слишком маленькое ({len(img_bytes)} bytes)")
-                            return None, None, None
-
-                        public_image_url = await upload_file_smart(img_bytes, filename="char.jpg")
-                    else:
-                        logging.error(f"❌ Не удалось скачать фото. Status: {resp.status}")
-                        return None, None, None
-            except Exception as e:
-                logging.error(f"❌ Ошибка при скачивании фото: {e}")
-                return None, None, None
-
-            # 2. Скачиваем и перезаливаем видео
-            if "vk.com" not in motion_video_url and "vk.ru" not in motion_video_url:
-                # Уже предзагруженное видео на публичный хостинг
-                logging.info(f"✅ Видео уже на публичном хостинге: {motion_video_url}")
-                public_video_url = motion_video_url
-            else:
-                # VK doc URL (vk.ru/doc...) может возвращать HTML без правильных заголовков
-                video_bytes = await _download_vk_doc_video(dlsession, motion_video_url)
-                if video_bytes is None:
-                    return None, None, None
-
-                public_video_url = await upload_file_smart(video_bytes, filename="motion.mp4")
-                if not public_video_url:
-                    logging.error("❌ Не удалось загрузить видео на хостинг.")
-                    return None, None, None
+        # Полный набор браузерных заголовков для обхода защиты VK (не используем для статических фото)
+        public_image_url = char_image_url
+        public_video_url = motion_video_url
 
         if not public_image_url or not public_video_url:
-            logging.error("❌ Не удалось подготовить публичные ссылки.")
+            logging.error("❌ Не удалось подготовить публичные ссылки (пустые URL).")
             return None, None, None
         
-        logging.info(f"📎 Image URL (re-uploaded): {public_image_url}")
-        logging.info(f"📎 Video URL (re-uploaded): {public_video_url}")
+        logging.info(f"📎 Image URL (native): {public_image_url}")
+        logging.info(f"📎 Video URL (native): {public_video_url}")
 
         payload_input = {
             "prompt": prompt or "Character animation based on reference video",

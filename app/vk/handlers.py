@@ -151,11 +151,28 @@ async def background_video_gen(
     prompt: str,
     model: str,
     motion_video_url: Optional[str] = None,
+    motion_doc_ref: Optional[str] = None,
 ):
     """Background video generation task"""
     try:
         final_prompt = prompt if (prompt and prompt.strip() != ".") else "High quality, cinematic"
         
+        # Если есть doc_ref, получаем свежую прямую ссылку через VK API
+        if motion_doc_ref and motion_video_url:
+            try:
+                docs_info = await bot.api.docs.get_by_id(docs=[motion_doc_ref])
+                if docs_info and len(docs_info) > 0:
+                    fresh_url = docs_info[0].url
+                    if fresh_url:
+                        logger.info(f"📎 VK API fresh doc URL: {fresh_url}")
+                        motion_video_url = fresh_url
+                    else:
+                        logger.warning("⚠️ VK API returned doc without URL, using original")
+                else:
+                    logger.warning("⚠️ VK API docs.getById returned empty, using original URL")
+            except Exception as e:
+                logger.error(f"⚠️ VK API docs.getById failed: {e}, using original URL")
+
         result = await generate_video(photo_url, final_prompt, model, motion_video_url=motion_video_url)
 
         if result and result[0]:
@@ -597,10 +614,14 @@ class VKHandlers:
 
         # Get video URL from attachment
         video_url = None
+        doc_owner_id = None
+        doc_id = None
         for attachment in message.attachments:
             if attachment.type == "doc" and getattr(attachment.doc, "ext", "").lower() in ["mp4", "mov", "avi", "mkv"]:
                 video_url = attachment.doc.url
-                logger.info(f"📹 VK doc video URL: {video_url}")
+                doc_owner_id = attachment.doc.owner_id
+                doc_id = attachment.doc.id
+                logger.info(f"📹 VK doc: owner={doc_owner_id}, id={doc_id}, url={video_url}")
                 break
             elif attachment.type == "video":
                 # video.player — это HTML-плеер, а не прямая ссылка на файл
@@ -620,6 +641,8 @@ class VKHandlers:
             return
 
         user_data["motion_video_url"] = video_url
+        if doc_owner_id and doc_id:
+            user_data["motion_doc_ref"] = f"{doc_owner_id}_{doc_id}"
 
         await message.answer(
             "✍️ Шаг 3: Описание (или '.' для пропуска):",
@@ -659,6 +682,7 @@ class VKHandlers:
         # Start generation
         if "motion" in model:
             motion_video_url = user_data.get("motion_video_url")
+            motion_doc_ref = user_data.get("motion_doc_ref")
             task = asyncio.create_task(
                 background_video_gen(
                     self.bot,
@@ -666,7 +690,8 @@ class VKHandlers:
                     photo_urls[0],
                     prompt,
                     model,
-                    motion_video_url=motion_video_url
+                    motion_video_url=motion_video_url,
+                    motion_doc_ref=motion_doc_ref
                 )
             )
             time_msg = "⏳ Магия началась! Motion Control занимает 7-12 минут."

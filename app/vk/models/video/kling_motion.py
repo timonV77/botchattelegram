@@ -16,42 +16,69 @@ class KlingMotionControl:
     async def generate(self, prompt: str, char_image_url: str, motion_video_url: str, orientation: str = "image"):
         """
         Перенос движения с видео на фото.
-        char_image_url: фото персонажа (VK CDN URL — публично доступен).
-        motion_video_url: видео с эталонным движением (VK doc URL — нужно перезалить).
+        char_image_url: фото персонажа.
+        motion_video_url: видео с эталонным движением (уже свежий URL через VK API).
         orientation: 'image' (до 10с) или 'video' (до 30с).
         """
+        import time
         
-        # 1. Фото персонажа: VK CDN URL публичный, используем напрямую
-        public_image_url = char_image_url
-        logging.info(f"📎 Image URL (VK CDN, direct): {public_image_url}")
-        
-        # 2. Видео: VK doc URL может быть временным, перезаливаем в Catbox
+        public_image_url = None
         public_video_url = None
+
         async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as dlsession:
+            # 1. Скачиваем и перезаливаем фото персонажа
+            try:
+                async with dlsession.get(char_image_url) as resp:
+                    if resp.status == 200:
+                        img_bytes = await resp.read()
+                        ct = resp.headers.get("Content-Type", "").lower()
+                        logging.info(f"📥 Image downloaded: {len(img_bytes)} bytes, content-type: {ct}")
+                        
+                        if not img_bytes or len(img_bytes) < 500:
+                            logging.error(f"❌ Фото слишком маленькое ({len(img_bytes)} bytes)")
+                            return None, None, None
+                        
+                        # Уникальное имя файла для обхода кеша Catbox
+                        unique_name = f"char_{int(time.time())}.jpg"
+                        public_image_url = await upload_file_smart(img_bytes, filename=unique_name)
+                    else:
+                        logging.error(f"❌ Не удалось скачать фото. Status: {resp.status}")
+                        return None, None, None
+            except Exception as e:
+                logging.error(f"❌ Ошибка при скачивании фото: {e}")
+                return None, None, None
+
+            # 2. Скачиваем и перезаливаем видео
             try:
                 async with dlsession.get(motion_video_url) as resp:
                     if resp.status == 200:
                         video_bytes = await resp.read()
-                        content_type = resp.headers.get("Content-Type", "").lower()
-                        logging.info(f"📥 Video downloaded: {len(video_bytes)} bytes, content-type: {content_type}")
+                        ct = resp.headers.get("Content-Type", "").lower()
+                        logging.info(f"📥 Video downloaded: {len(video_bytes)} bytes, content-type: {ct}")
                         
-                        # Проверяем что это действительно видео
-                        if not video_bytes or len(video_bytes) < 1000:
-                            logging.error(f"❌ Видео слишком маленькое ({len(video_bytes)} bytes), возможно не MP4")
+                        # Проверяем что это видео, а не HTML-страница
+                        if "text/html" in ct:
+                            logging.error(f"❌ Видео URL вернул HTML вместо файла! URL: {motion_video_url[:100]}...")
                             return None, None, None
                         
-                        public_video_url = await upload_file_smart(video_bytes, filename="motion.mp4")
+                        if not video_bytes or len(video_bytes) < 1000:
+                            logging.error(f"❌ Видео слишком маленькое ({len(video_bytes)} bytes)")
+                            return None, None, None
+                        
+                        unique_name = f"motion_{int(time.time())}.mp4"
+                        public_video_url = await upload_file_smart(video_bytes, filename=unique_name)
                     else:
-                        logging.error(f"❌ Не удалось скачать видео движения. Status: {resp.status}")
+                        logging.error(f"❌ Не удалось скачать видео. Status: {resp.status}")
                         return None, None, None
             except Exception as e:
                 logging.error(f"❌ Ошибка при скачивании видео: {e}")
                 return None, None, None
 
-        if not public_video_url:
-            logging.error("❌ Не удалось подготовить публичную ссылку для видео.")
+        if not public_image_url or not public_video_url:
+            logging.error("❌ Не удалось подготовить публичные ссылки.")
             return None, None, None
         
+        logging.info(f"📎 Image URL (re-uploaded): {public_image_url}")
         logging.info(f"📎 Video URL (re-uploaded): {public_video_url}")
 
         payload_input = {

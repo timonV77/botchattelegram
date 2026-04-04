@@ -628,58 +628,60 @@ class VKHandlers:
                 logger.info(f"📹 VK doc: owner={doc_owner_id}, id={doc_id}, url={video_url}, access_key={doc_access_key}")
                 break
             elif attachment.type == "video":
-                # video.player — это HTML-плеер, а не прямая ссылка на файл
-                logger.warning(f"⚠️ VK video attachment detected (player URL, not raw file). Rejecting.")
-                await message.answer(
-                    "⚠️ Видео нужно отправить именно как **Документ** (📎 → Файл).\n\n"
-                    "Обычное видео ВК нельзя использовать — оно не даёт прямую ссылку на файл.",
-                    keyboard=get_cancel_keyboard()
-                )
-                return
-
+                video_url = f"https://vk.com/video{attachment.video.owner_id}_{attachment.video.id}"
+                if getattr(attachment.video, "access_key", None):
+                    video_url += f"_{attachment.video.access_key}"
+                logger.info(f"📹 VK video passed directly: {video_url}")
+                user_data["motion_video_url"] = video_url
+                user_data["motion_video_pre_uploaded"] = True
+                pre_uploaded_video = True
+                break
         if not video_url:
             await message.answer(
-                "⚠️ Не удалось получить видео. Пожалуйста, отправьте видео **как Документ (📎 → Файл)**.",
+                "⚠️ Не удалось получить видео. Пожалуйста, отправьте видео **как Видео или Документ (📎 → Файл)**.",
                 keyboard=get_cancel_keyboard()
             )
             return
 
-        # Сразу скачиваем и перезаливаем видео на публичный хостинг,
-        # пока URL ещё "горячий" и не требует авторизации VK
-        import aiohttp
-        from app.network import get_connector, timeout_config
-        await message.answer("🔄 Принимаю видео...", keyboard=get_cancel_keyboard())
-        try:
-            async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as sess:
-                video_bytes = await _download_vk_doc_video(sess, video_url)
-            if video_bytes:
-                try:
-                    from vkbottle import VideoUploader
-                    video_uploader = VideoUploader(self.bot.api)
-                    attachment = await video_uploader.upload(file_source=video_bytes, name="motion_ref.mp4")
-                    public_video_url = f"https://vk.com/{attachment}"
-                    logger.info(f"✅ Видео загружено в VK video.save: {public_video_url}")
-                    user_data["motion_video_url"] = public_video_url
-                    user_data["motion_video_pre_uploaded"] = True
-                except Exception as up_err:
-                    logger.warning(f"⚠️ Ошибка загрузки видео в VK: {up_err}, fallback to doc URL")
+        pre_uploaded_video = user_data.get("motion_video_pre_uploaded", False)
+
+        if not pre_uploaded_video:
+            # Сразу скачиваем и перезаливаем видео на публичный хостинг,
+            # пока URL ещё "горячий" и не требует авторизации VK
+            import aiohttp
+            from app.network import get_connector, timeout_config
+            await message.answer("🔄 Принимаю видео...", keyboard=get_cancel_keyboard())
+            try:
+                async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as sess:
+                    video_bytes = await _download_vk_doc_video(sess, video_url)
+                if video_bytes:
+                    try:
+                        from vkbottle import VideoUploader
+                        video_uploader = VideoUploader(self.bot.api)
+                        attachment = await video_uploader.upload(file_source=video_bytes, name=f"motion_ref_{user_id}.mp4")
+                        public_video_url = f"https://vk.com/{attachment}"
+                        logger.info(f"✅ Видео загружено в VK video.save: {public_video_url}")
+                        user_data["motion_video_url"] = public_video_url
+                        user_data["motion_video_pre_uploaded"] = True
+                    except Exception as up_err:
+                        logger.warning(f"⚠️ Ошибка загрузки видео в VK: {up_err}, fallback to doc URL")
+                        user_data["motion_video_url"] = video_url
+                        if doc_owner_id and doc_id:
+                            ref = f"{doc_owner_id}_{doc_id}"
+                            if doc_access_key: ref += f"_{doc_access_key}"
+                            user_data["motion_doc_ref"] = ref
+                else:
+                    logger.warning("⚠️ Не удалось скачать видео сразу, будем пробовать позже")
                     user_data["motion_video_url"] = video_url
                     if doc_owner_id and doc_id:
                         ref = f"{doc_owner_id}_{doc_id}"
                         if doc_access_key: ref += f"_{doc_access_key}"
                         user_data["motion_doc_ref"] = ref
-            else:
-                logger.warning("⚠️ Не удалось скачать видео сразу, будем пробовать позже")
+            except Exception as e:
+                logger.error(f"❌ Ошибка предзагрузки видео: {e}")
                 user_data["motion_video_url"] = video_url
                 if doc_owner_id and doc_id:
                     ref = f"{doc_owner_id}_{doc_id}"
-                    if doc_access_key: ref += f"_{doc_access_key}"
-                    user_data["motion_doc_ref"] = ref
-        except Exception as e:
-            logger.error(f"❌ Ошибка предзагрузки видео: {e}")
-            user_data["motion_video_url"] = video_url
-            if doc_owner_id and doc_id:
-                ref = f"{doc_owner_id}_{doc_id}"
                 if doc_access_key: ref += f"_{doc_access_key}"
                 user_data["motion_doc_ref"] = ref
 

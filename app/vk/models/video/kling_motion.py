@@ -16,40 +16,43 @@ class KlingMotionControl:
     async def generate(self, prompt: str, char_image_url: str, motion_video_url: str, orientation: str = "image"):
         """
         Перенос движения с видео на фото.
-        char_image_url: фото персонажа.
-        motion_video_url: видео с эталонным движением.
+        char_image_url: фото персонажа (VK CDN URL — публично доступен).
+        motion_video_url: видео с эталонным движением (VK doc URL — нужно перезалить).
         orientation: 'image' (до 10с) или 'video' (до 30с).
         """
         
-        # 1. Готовим публичные ссылки для фото и видео (Клинг не любит прямые ссылки ВК)
-        public_image_url = None
+        # 1. Фото персонажа: VK CDN URL публичный, используем напрямую
+        public_image_url = char_image_url
+        logging.info(f"📎 Image URL (VK CDN, direct): {public_image_url}")
+        
+        # 2. Видео: VK doc URL может быть временным, перезаливаем в Catbox
         public_video_url = None
-
         async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as dlsession:
-            # Загружаем фото персонажа
-            async with dlsession.get(char_image_url) as resp:
-                if resp.status == 200:
-                    img_bytes = await resp.read()
-                    public_image_url = await upload_file_smart(img_bytes, filename="char.jpg")
-                else:
-                    logging.error(f"❌ Не удалось скачать фото персонажа. Status: {resp.status}")
-                    return None, None, None
+            try:
+                async with dlsession.get(motion_video_url) as resp:
+                    if resp.status == 200:
+                        video_bytes = await resp.read()
+                        content_type = resp.headers.get("Content-Type", "").lower()
+                        logging.info(f"📥 Video downloaded: {len(video_bytes)} bytes, content-type: {content_type}")
+                        
+                        # Проверяем что это действительно видео
+                        if not video_bytes or len(video_bytes) < 1000:
+                            logging.error(f"❌ Видео слишком маленькое ({len(video_bytes)} bytes), возможно не MP4")
+                            return None, None, None
+                        
+                        public_video_url = await upload_file_smart(video_bytes, filename="motion.mp4")
+                    else:
+                        logging.error(f"❌ Не удалось скачать видео движения. Status: {resp.status}")
+                        return None, None, None
+            except Exception as e:
+                logging.error(f"❌ Ошибка при скачивании видео: {e}")
+                return None, None, None
 
-            # Загружаем видео с движением
-            async with dlsession.get(motion_video_url) as resp:
-                if resp.status == 200:
-                    video_bytes = await resp.read()
-                    public_video_url = await upload_file_smart(video_bytes, filename="motion.mp4")
-                else:
-                    logging.error(f"❌ Не удалось скачать видео движения. Status: {resp.status}")
-                    return None, None, None
-
-        if not public_image_url or not public_video_url:
-            logging.error("❌ Не удалось подготовить публичные ссылки для генерации.")
+        if not public_video_url:
+            logging.error("❌ Не удалось подготовить публичную ссылку для видео.")
             return None, None, None
         
-        logging.info(f"📎 Image URL: {public_image_url}")
-        logging.info(f"📎 Video URL: {public_video_url}")
+        logging.info(f"📎 Video URL (re-uploaded): {public_video_url}")
 
         payload_input = {
             "prompt": prompt or "Character animation based on reference video",

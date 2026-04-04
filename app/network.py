@@ -50,6 +50,19 @@ async def upload_file_to_host(file_bytes: bytes, filename: str = None) -> Option
     return None
 
 
+async def upload_file_smart(file_bytes: bytes, filename: str = None) -> Optional[str]:
+    """Умный загрузчик: Телеграф для мелких файлов (<5МБ), Кэтбокс для крупных."""
+    size_mb = len(file_bytes) / (1024 * 1024)
+    
+    if size_mb < 3.5: # Берем с запасом (лимит 5МБ)
+        url = await upload_file_to_host(file_bytes, filename)
+        if url:
+            return url
+        logging.warning("⚠️ Telegraph не справился, пробуем Catbox в качестве запаски...")
+    
+    return await upload_file_to_catbox(file_bytes)
+
+
 async def upload_file_to_catbox(file_bytes: bytes) -> Optional[str]:
     """Upload larger files (up to 200MB) to Catbox.moe"""
     try:

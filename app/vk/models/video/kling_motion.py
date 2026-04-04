@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import aiohttp
-from app.network import BASE_URL, POLZA_API_KEY, get_connector, timeout_config, _download_content_bytes, upload_file_to_catbox
+from app.network import BASE_URL, POLZA_API_KEY, get_connector, timeout_config, _download_content_bytes, upload_file_smart
 
 
 class KlingMotionControl:
@@ -21,14 +21,14 @@ class KlingMotionControl:
         orientation: 'image' (до 10с) или 'video' (до 30с).
         """
         
-        # 1. Скачиваем видео и заливаем на Catbox для публичной ссылки
-        # (API Polza.ai / Kling предпочитает URL для видео вместо Base64. Catbox надежнее для видео > 5МБ)
+        # 1. Скачиваем видео и заливаем через Smart Uploader
+        # (Пробует Telegraph для малых файлов (<3.5МБ), Catbox для крупных)
         public_video_url = None
         async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as dlsession:
             async with dlsession.get(motion_video_url) as resp:
                 if resp.status == 200:
                     video_bytes = await resp.read()
-                    public_video_url = await upload_file_to_catbox(video_bytes)
+                    public_video_url = await upload_file_smart(video_bytes)
                 else:
                     logging.error(f"❌ Не удалось скачать ВК-видео. Status: {resp.status}")
                     return None, None, None
@@ -54,13 +54,26 @@ class KlingMotionControl:
         async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as session:
             try:
                 logging.info(f"💃 Kling Motion Control Start (Mode: {self.mode})")
-                async with session.post(f"{BASE_URL}/media", headers=self.headers, json=payload) as resp:
-                    if resp.status not in (200, 201):
-                        logging.error(f"❌ Motion Control Error: {await resp.text()}")
+                
+                request_id = None
+                for attempt in range(3):
+                    async with session.post(f"{BASE_URL}/media", headers=self.headers, json=payload) as resp:
+                        if resp.status in (200, 201):
+                            data = await resp.json()
+                            request_id = data.get("id")
+                            break
+                        
+                        resp_text = await resp.text()
+                        # Если сервер перегружен (502, 503, 504) — пробуем еще раз
+                        if resp.status in (502, 503, 504) and attempt < 2:
+                            logging.warning(f"⚠️ Polza AI server error ({resp.status}), retry {attempt+1}/3...")
+                            await asyncio.sleep(5)
+                            continue
+                        
+                        logging.error(f"❌ Motion Control Error: {resp_text}")
                         return None, None, None
 
-                    data = await resp.json()
-                    request_id = data.get("id")
+                if not request_id: return None, None, None
 
                 # Polling: Технология сложная, может занять время
                 for attempt in range(120):  # До 20 минут

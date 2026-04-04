@@ -21,27 +21,38 @@ class KlingMotionControl:
         orientation: 'image' (до 10с) или 'video' (до 30с).
         """
         
-        # 1. Скачиваем видео и заливаем через Smart Uploader
-        # (Пробует Telegraph для малых файлов (<3.5МБ), Catbox для крупных)
+        # 1. Готовим публичные ссылки для фото и видео (Клинг не любит прямые ссылки ВК)
+        public_image_url = None
         public_video_url = None
+
         async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as dlsession:
+            # Загружаем фото персонажа
+            async with dlsession.get(char_image_url) as resp:
+                if resp.status == 200:
+                    img_bytes = await resp.read()
+                    public_image_url = await upload_file_smart(img_bytes, filename="char.jpg")
+                else:
+                    logging.error(f"❌ Не удалось скачать фото персонажа. Status: {resp.status}")
+                    return None, None, None
+
+            # Загружаем видео с движением
             async with dlsession.get(motion_video_url) as resp:
                 if resp.status == 200:
                     video_bytes = await resp.read()
                     public_video_url = await upload_file_smart(video_bytes)
                 else:
-                    logging.error(f"❌ Не удалось скачать ВК-видео. Status: {resp.status}")
+                    logging.error(f"❌ Не удалось скачать видео движения. Status: {resp.status}")
                     return None, None, None
 
-        if not public_video_url:
-            logging.error("❌ Не удалось получить публичную ссылку на видео.")
+        if not public_image_url or not public_video_url:
+            logging.error("❌ Не удалось подготовить публичные ссылки для генерации.")
             return None, None, None
 
         payload_input = {
             "prompt": prompt or "Character animation based on reference video",
             "mode": self.mode,
             "character_orientation": orientation,
-            "images": [char_image_url],
+            "images": [public_image_url],
             "videos": [public_video_url]
         }
 

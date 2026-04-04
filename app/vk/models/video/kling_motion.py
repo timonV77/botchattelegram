@@ -20,12 +20,17 @@ class KlingMotionControl:
         motion_video_url: видео с эталонным движением (уже свежий URL через VK API).
         orientation: 'image' (до 10с) или 'video' (до 30с).
         """
-        import time
-        
         public_image_url = None
         public_video_url = None
 
-        async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as dlsession:
+        # Браузерные заголовки для обхода защиты VK
+        vk_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Referer": "https://vk.com/",
+            "Accept": "*/*",
+        }
+
+        async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config, headers=vk_headers) as dlsession:
             # 1. Скачиваем и перезаливаем фото персонажа
             try:
                 async with dlsession.get(char_image_url) as resp:
@@ -33,14 +38,12 @@ class KlingMotionControl:
                         img_bytes = await resp.read()
                         ct = resp.headers.get("Content-Type", "").lower()
                         logging.info(f"📥 Image downloaded: {len(img_bytes)} bytes, content-type: {ct}")
-                        
+
                         if not img_bytes or len(img_bytes) < 500:
                             logging.error(f"❌ Фото слишком маленькое ({len(img_bytes)} bytes)")
                             return None, None, None
-                        
-                        # Уникальное имя файла для обхода кеша Catbox
-                        unique_name = f"char_{int(time.time())}.jpg"
-                        public_image_url = await upload_file_smart(img_bytes, filename=unique_name)
+
+                        public_image_url = await upload_file_smart(img_bytes, filename="char.jpg")
                     else:
                         logging.error(f"❌ Не удалось скачать фото. Status: {resp.status}")
                         return None, None, None
@@ -48,25 +51,24 @@ class KlingMotionControl:
                 logging.error(f"❌ Ошибка при скачивании фото: {e}")
                 return None, None, None
 
-            # 2. Скачиваем и перезаливаем видео
+            # 2. Скачиваем и перезаливаем видео (с браузерными заголовками для VK doc URL)
             try:
                 async with dlsession.get(motion_video_url) as resp:
                     if resp.status == 200:
                         video_bytes = await resp.read()
                         ct = resp.headers.get("Content-Type", "").lower()
                         logging.info(f"📥 Video downloaded: {len(video_bytes)} bytes, content-type: {ct}")
-                        
+
                         # Проверяем что это видео, а не HTML-страница
                         if "text/html" in ct:
-                            logging.error(f"❌ Видео URL вернул HTML вместо файла! URL: {motion_video_url[:100]}...")
+                            logging.error(f"❌ Видео URL вернул HTML! Нужны другие заголовки или URL устарел. URL: {motion_video_url[:120]}")
                             return None, None, None
-                        
+
                         if not video_bytes or len(video_bytes) < 1000:
                             logging.error(f"❌ Видео слишком маленькое ({len(video_bytes)} bytes)")
                             return None, None, None
-                        
-                        unique_name = f"motion_{int(time.time())}.mp4"
-                        public_video_url = await upload_file_smart(video_bytes, filename=unique_name)
+
+                        public_video_url = await upload_file_smart(video_bytes, filename="motion.mp4")
                     else:
                         logging.error(f"❌ Не удалось скачать видео. Status: {resp.status}")
                         return None, None, None

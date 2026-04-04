@@ -18,6 +18,7 @@ from app.vk.state_manager import VKStateManager
 from app.vk.file_handler import download_vk_photo, download_vk_video, bytes_to_base64_data_uri
 from app.network import get_connector, timeout_config
 from app.vk.models.video.kling_motion import _download_vk_doc_video
+from app.vk.vk_video_resolver import resolve_vk_video_direct_url
 from app.vk.generation import (
     has_balance, charge, generate_photo as generate, generate_video, COSTS
 )
@@ -154,7 +155,6 @@ async def background_video_gen(
     model: str,
     motion_video_url: Optional[str] = None,
     motion_doc_ref: Optional[str] = None,
-    vk_video_id: Optional[str] = None,
 ):
     """Background video generation task"""
     try:
@@ -175,17 +175,6 @@ async def background_video_gen(
                     logger.warning("⚠️ VK API docs.getById returned empty, using original URL")
             except Exception as e:
                 logger.error(f"⚠️ VK API docs.getById failed: {e}, using original URL")
-
-        # Если это видео-вложение из ВК (не документ)
-        if vk_video_id:
-            from app.vk.video_proxy import get_direct_video_and_upload
-            logger.info(f"🔄 Извлечение прямой ссылки для видео {vk_video_id}...")
-            catbox_url = await get_direct_video_and_upload(vk_video_id)
-            if catbox_url:
-                logger.info(f"✅ Итоговая прямая ссылка для Kling: {catbox_url}")
-                motion_video_url = catbox_url
-            else:
-                logger.warning("⚠️ Не удалось получить ссылку через proxy, используем исходный URL")
 
         result = await generate_video(photo_url, final_prompt, model, motion_video_url=motion_video_url)
 
@@ -615,10 +604,9 @@ class VKHandlers:
         return
 
     async def handle_motion_video_upload(self, message: Message, user_data: dict) -> str:
-        """Handle motion video upload"""
+        """Handle motion video upload — with 3-strategy direct URL resolution."""
         user_id = message.from_id
 
-        # Check if message has video
         if not message.attachments:
             await message.answer(
                 "⚠️ Пожалуйста, пришлите видео.",
@@ -626,78 +614,59 @@ class VKHandlers:
             )
             return
 
-        # Get video URL from attachment
-        video_url = None
-        doc_owner_id = None
-        doc_id = None
-        doc_access_key = None
+        # ── Разбираем вложение ───────────────────────────────────────────────
+        doc_url = None
+        vid_owner_id = None
+        vid_id = None
+        vid_access_key = None
+
         for attachment in message.attachments:
             if attachment.type == "doc" and getattr(attachment.doc, "ext", "").lower() in ["mp4", "mov", "avi", "mkv"]:
-                video_url = attachment.doc.url
-                doc_owner_id = attachment.doc.owner_id
-                doc_id = attachment.doc.id
-                doc_access_key = getattr(attachment.doc, "access_key", None)
-                logger.info(f"📹 VK doc: owner={doc_owner_id}, id={doc_id}, url={video_url}, access_key={doc_access_key}")
+                doc_url = attachment.doc.url
+                logger.info(
+                    f"📹 VK doc: owner={attachment.doc.owner_id}, "
+                    f"id={attachment.doc.id}, url={doc_url[:80]}"
+                )
                 break
             elif attachment.type == "video":
-                video_id = f"{attachment.video.owner_id}_{attachment.video.id}"
-                video_url = f"https://vk.com/video{video_id}"
-                if getattr(attachment.video, "access_key", None):
-                    video_id += f"_{attachment.video.access_key}"
-                    video_url += f"_{attachment.video.access_key}"
-                logger.info(f"📹 VK video ID passed directly: {video_id}")
-                user_data["vk_video_id"] = video_id
-                user_data["motion_video_url"] = video_url
-                user_data["motion_video_pre_uploaded"] = True
-                pre_uploaded_video = True
+                vid_owner_id = attachment.video.owner_id
+                vid_id = attachment.video.id
+                vid_access_key = getattr(attachment.video, "access_key", None)
+                logger.info(f"📹 VK video: owner={vid_owner_id}, id={vid_id}, access_key={vid_access_key}")
                 break
-        if not video_url:
+
+        if not doc_url and not vid_owner_id:
             await message.answer(
-                "⚠️ Не удалось получить видео. Пожалуйста, отправьте видео **как Видео или Документ (📎 → Файл)**.",
+                "⚠️ Не удалось получить видео. Отправьте видео как **Видео** или **Документ (📎 → Файл)**.",
                 keyboard=get_cancel_keyboard()
             )
             return
 
-        pre_uploaded_video = user_data.get("motion_video_pre_uploaded", False)
+        # ── Резолвим прямую ссылку (каскад из 3 стратегий) ───────────────────
+        await message.answer("🔄 Получаю прямую ссылку на видео...", keyboard=get_cancel_keyboard())
 
-        if not pre_uploaded_video:
-            # Сразу скачиваем и перезаливаем видео на публичный хостинг,
-            # пока URL ещё "горячий" и не требует авторизации VK
-            import aiohttp
-            from app.network import get_connector, timeout_config
-            await message.answer("🔄 Принимаю видео...", keyboard=get_cancel_keyboard())
-            try:
-                async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout_config) as sess:
-                    video_bytes = await _download_vk_doc_video(sess, video_url)
-                if video_bytes:
-                    try:
-                        from vkbottle import VideoUploader
-                        video_uploader = VideoUploader(self.bot.api)
-                        attachment = await video_uploader.upload(file_source=video_bytes, name=f"motion_ref_{user_id}.mp4")
-                        public_video_url = f"https://vk.com/{attachment}"
-                        logger.info(f"✅ Видео загружено в VK video.save: {public_video_url}")
-                        user_data["motion_video_url"] = public_video_url
-                        user_data["motion_video_pre_uploaded"] = True
-                    except Exception as up_err:
-                        logger.warning(f"⚠️ Ошибка загрузки видео в VK: {up_err}, fallback to doc URL")
-                        user_data["motion_video_url"] = video_url
-                        if doc_owner_id and doc_id:
-                            ref = f"{doc_owner_id}_{doc_id}"
-                            if doc_access_key: ref += f"_{doc_access_key}"
-                            user_data["motion_doc_ref"] = ref
-                else:
-                    logger.warning("⚠️ Не удалось скачать видео сразу, будем пробовать позже")
-                    user_data["motion_video_url"] = video_url
-                    if doc_owner_id and doc_id:
-                        ref = f"{doc_owner_id}_{doc_id}"
-                        if doc_access_key: ref += f"_{doc_access_key}"
-                        user_data["motion_doc_ref"] = ref
-            except Exception as e:
-                logger.error(f"❌ Ошибка предзагрузки видео: {e}")
-                user_data["motion_video_url"] = video_url
-                if doc_owner_id and doc_id:
-                    ref = f"{doc_owner_id}_{doc_id}"
-                if doc_access_key: ref += f"_{doc_access_key}"
+        direct_url = await resolve_vk_video_direct_url(
+            owner_id=vid_owner_id,
+            video_id=vid_id,
+            access_key=vid_access_key,
+            doc_url=doc_url,
+        )
+
+        if direct_url:
+            logger.info(f"✅ Прямая ссылка на видео получена: {direct_url[:80]}...")
+            user_data["motion_video_url"] = direct_url
+        else:
+            # Последний fallback — передаём сырой URL и надеемся на docs.getById при генерации
+            fallback_url = doc_url or f"https://vk.com/video{vid_owner_id}_{vid_id}"
+            logger.warning(f"⚠️ Прямую ссылку получить не удалось. Используем fallback: {fallback_url[:80]}")
+            user_data["motion_video_url"] = fallback_url
+            # Сохраняем doc_ref для docs.getById в background_video_gen
+            if doc_url and hasattr(message.attachments[0], 'doc'):
+                doc = message.attachments[0].doc
+                ref = f"{doc.owner_id}_{doc.id}"
+                ak = getattr(doc, "access_key", None)
+                if ak:
+                    ref += f"_{ak}"
                 user_data["motion_doc_ref"] = ref
 
         await message.answer(
@@ -739,7 +708,6 @@ class VKHandlers:
         if "motion" in model:
             motion_video_url = user_data.get("motion_video_url")
             motion_doc_ref = user_data.get("motion_doc_ref")
-            vk_video_id = user_data.get("vk_video_id")
             task = asyncio.create_task(
                 background_video_gen(
                     self.bot,
@@ -748,8 +716,7 @@ class VKHandlers:
                     prompt,
                     model,
                     motion_video_url=motion_video_url,
-                    motion_doc_ref=motion_doc_ref,
-                    vk_video_id=vk_video_id
+                    motion_doc_ref=motion_doc_ref
                 )
             )
             time_msg = "⏳ Магия началась! Motion Control занимает 7-12 минут."
@@ -865,4 +832,5 @@ class VKHandlers:
         user_id = message.from_id
         help_text = "По любым вопросам или проблемам (включая пополнение) пишите в нашу поддержку: @esya0010"
         await message.answer(help_text, keyboard=get_main_keyboard(user_id))
+        return
         return

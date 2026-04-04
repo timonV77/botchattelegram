@@ -5,4 +5,5 @@ vkbottle==4.8.0
 redis
 pydantic>=2.10.0
 asyncpg
+yt-dlp
 

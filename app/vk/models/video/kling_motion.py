@@ -81,14 +81,22 @@ async def _download_vk_doc_video(session: aiohttp.ClientSession, url: str) -> by
                     if "text/html" in ct:
                         import re
                         html_text = data.decode("utf-8", errors="ignore")
-                        # Try to find iframe src or meta refresh or any direct link, typically psv4.userapi.com or docs.vk.com
-                        match = re.search(r'(?:src|href|URL)=[\'"]?(https://[^\s\'"]+psv4\.userapi\.com[^\s\'"]+)[\'"]?', html_text)
-                        if not match:
-                            # VK also uses other doc domains for direct file delivery
-                            match = re.search(r'(?:src|href|URL)=[\'"]?(https://[^\s\'"]+\.vk\.com/doc[^\s\'"]+)[\'"]?', html_text)
                         
-                        if match:
-                            real_url = match.group(1).replace("&amp;", "&")
+                        # Ищем ЛЮБУЮ прямую ссылку на медиаконтент в HTML
+                        # 1. userapi.com (все поддомены: sun9, psv4 и т.д.)
+                        # 2. ИЛИ содержит /doc и vk.
+                        # 3. ИЛИ заканчивается на .mp4
+                        pattern = r'(?:src|href|URL|url|action)=[\'"]?(https://[^\s\'">]+(?:userapi\.com|vk\.(?:com|ru)/(?:doc|video_ext)|vnd\.vk\.com|/[^\s\'">]+\.mp4)[^\s\'">]*)[\'"]?'
+                        matches = set(re.findall(pattern, html_text))
+                        
+                        real_url = None
+                        for m in matches:
+                            # Игнорируем скрипты и стили
+                            if not m.endswith((".js", ".css")):
+                                real_url = m.replace("&amp;", "&")
+                                break
+                        
+                        if real_url:
                             logging.info(f"🔄 Extracted real URL from VK HTML: {real_url[:80]}...")
                             try:
                                 async with session.get(real_url, headers=headers, allow_redirects=True) as real_resp:

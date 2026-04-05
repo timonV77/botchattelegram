@@ -272,7 +272,7 @@ class VKHandlers:
         user_data = await self.state.get_data(user_id)
 
         # --- CANCEL/BACK ---
-        if "отменить" in text or "❌" in text or "назад" in text or "🔙" in text:
+        if text in ("отменить", "назад", "❌ отменить", "🔙 назад", "отмена", "❌", "🔙"):
             await self.state.clear_state(user_id)
             await self.state.clear_data(user_id)
             await message.answer(
@@ -282,13 +282,13 @@ class VKHandlers:
             return
 
         # --- ADMIN PANEL ---
-        elif is_admin and ("🛡" in text or "админ" in text):
+        elif is_admin and text in ("🛡", "админ", "🛡 админ панель"):
             return await self.handle_admin_panel(message)
         
-        elif is_admin and "👥 пользователи" in text:
+        elif is_admin and text in ("👥 пользователи", "пользователи"):
             return await self.handle_admin_stats(message)
 
-        elif is_admin and "💳 выдать баланс" in text:
+        elif is_admin and text in ("💳 выдать баланс", "выдать баланс"):
             await self.state.set_state(user_id, "admin_waiting_grant")
             await message.answer(
                 "📝 Введите данные в формате:\n\nID:Сумма\nНапример: 424721069:100",
@@ -302,26 +302,6 @@ class VKHandlers:
         # --- START / MAIN MENU ---
         elif self._is_start_command(message, text):
             return await self.handle_start(message)
-
-        # --- PHOTO SESSION ---
-        elif "начать фотосессию" in text or text == "📸 начать фотосессию":
-            return await self.handle_start_photo(message)
-
-        # --- VIDEO SESSION ---
-        elif "оживить фото" in text or text == "🎬 оживить фото":
-            return await self.handle_start_video(message)
-
-        # --- BALANCE ---
-        elif "мой баланс" in text or "💰" in text:
-            return await self.handle_balance(message)
-
-        # --- DEPOSIT ---
-        elif "пополнить" in text or "💳" in text:
-            return await self.handle_deposit(message)
-
-        # --- HELP ---
-        elif "помощь" in text or "🆘" in text:
-            return await self.handle_help(message)
 
         # --- STATE-BASED HANDLERS ---
         elif state == "waiting_for_model":
@@ -344,6 +324,26 @@ class VKHandlers:
             
         elif state == "waiting_for_deposit_amount":
             return await self.handle_deposit_amount(message, user_data)
+
+        # --- PHOTO SESSION ---
+        elif text in ("начать фотосессию", "📸 начать фотосессию"):
+            return await self.handle_start_photo(message)
+
+        # --- VIDEO SESSION ---
+        elif text in ("оживить фото", "🎬 оживить фото"):
+            return await self.handle_start_video(message)
+
+        # --- BALANCE ---
+        elif text in ("мой баланс", "💰 мой баланс", "баланс", "💰"):
+            return await self.handle_balance(message)
+
+        # --- DEPOSIT ---
+        elif text in ("пополнить", "💳 пополнить", "💳"):
+            return await self.handle_deposit(message)
+
+        # --- HELP ---
+        elif text in ("помощь", "🆘 помощь", "🆘"):
+            return await self.handle_help(message)
 
         else:
             await message.answer(

@@ -89,6 +89,7 @@ async def background_photo_gen(
             await bot.api.messages.send(
                 user_id=user_id,
                 message="⚠️ Не удалось подготовить фото-референс.",
+                keyboard=get_main_keyboard(user_id),
                 random_id=0
             )
             return
@@ -100,6 +101,7 @@ async def background_photo_gen(
             await bot.api.messages.send(
                 user_id=user_id,
                 message="⚠️ Не удалось получить результат от нейросети.",
+                keyboard=get_main_keyboard(user_id),
                 random_id=0
             )
             return

@@ -21,10 +21,10 @@ class NanoBanana:
             "Content-Type": "application/json"
         }
 
-    async def generate(self, prompt: str, image_urls: list = None):
+    async def generate(self, prompt: str, image_urls: list = None, aspect_ratio: str = "1:1"):
         payload_input = {
             "prompt": prompt,
-            "aspect_ratio": "1:1",
+            "aspect_ratio": aspect_ratio,
             "output_format": "png"
         }
 

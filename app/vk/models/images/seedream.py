@@ -49,9 +49,6 @@ class Seedream:
 
     async def generate(self, prompt: str, image_urls=None, quality: str = "basic", aspect_ratio: str = "1:1") -> Tuple[
         Optional[bytes], Optional[str], Optional[str]]:
-        # Ограничение промпта по доке (до 3000 символов)
-        prompt = prompt[:3000]
-
         payload_input = {
             "prompt": prompt,
             "aspect_ratio": aspect_ratio,

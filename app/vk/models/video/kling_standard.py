@@ -47,9 +47,6 @@ class KlingStandard:
 
     async def generate(self, prompt: str, image_urls=None, duration="5") -> Tuple[Optional[bytes], Optional[str], Optional[str]]:
         try:
-            # Ограничение промпта (обычно до 2500 символов)
-            prompt = prompt[:2500]
-
             # Сервер строго требует строку для duration ("5" или "10")
             duration_str = str(duration)
 

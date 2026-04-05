@@ -70,6 +70,8 @@ async def background_photo_gen(
     photo_urls: List[str],
     prompt: str,
     model: str,
+    aspect_ratio: str = "1:1",
+    quality: str = "1K",
 ):
     """Background photo generation task"""
     try:
@@ -92,7 +94,7 @@ async def background_photo_gen(
             return
 
         # Generate
-        result = await generate(image_urls=photo_sources, prompt=prompt, model=model)
+        result = await generate(image_urls=photo_sources, prompt=prompt, model=model, aspect_ratio=aspect_ratio, quality=quality)
 
         if not result or not result[0]:
             await bot.api.messages.send(
@@ -328,6 +330,12 @@ class VKHandlers:
         elif state == "waiting_for_photo":
             return await self.handle_photo_upload(message, user_data)
 
+        elif state == "waiting_for_aspect_ratio":
+            return await self.handle_aspect_ratio(message, user_data)
+
+        elif state == "waiting_for_quality":
+            return await self.handle_quality(message, user_data)
+
         elif state == "waiting_for_motion_video":
             return await self.handle_motion_video_upload(message, user_data)
 
@@ -547,7 +555,7 @@ class VKHandlers:
             )
         else:
             await message.answer(
-                "📸 Шаг 1: Пришлите фото для обработки:",
+                "📸 Шаг 1: Пришлите от 1 до 8 фото для обработки (в одном сообщении):",
                 keyboard=get_cancel_keyboard()
             )
 
@@ -568,24 +576,24 @@ class VKHandlers:
             return
 
         # Get photo URL from attachment
-        photo_url = None
+        photo_urls = []
         for attachment in message.attachments:
             if attachment.type == "photo":
-                # Get the largest size available
-                photo_url = attachment.photo.sizes[-1].url
-                break
+                photo_urls.append(attachment.photo.sizes[-1].url)
             elif attachment.type == "doc" and getattr(attachment.doc, "ext", "").lower() in ["jpg", "jpeg", "png", "webp"]:
-                photo_url = attachment.doc.url
-                break
+                photo_urls.append(attachment.doc.url)
 
-        if not photo_url:
+        if not photo_urls:
             await message.answer(
                 "⚠️ Не удалось получить фото. Попробуй еще раз.",
                 keyboard=get_cancel_keyboard()
             )
             return
 
-        user_data["photo_urls"] = [photo_url]
+        if len(photo_urls) > 8:
+            await message.answer("⚠️ Вы прикрепили больше 8 фото. Мы будем использовать только первые 8.")
+
+        user_data["photo_urls"] = photo_urls[:8]
 
         if "motion" in model:
             await message.answer(
@@ -597,13 +605,75 @@ class VKHandlers:
             )
             await self.state.set_state(user_id, "waiting_for_motion_video")
         else:
+            from app.vk.keyboards import get_aspect_ratio_keyboard
             await message.answer(
-                "✍️ Шаг 2: Описание изменений (или пропустить с '.'):",
+                "📐 Шаг 2: Выберите соотношение сторон:",
+                keyboard=get_aspect_ratio_keyboard(model)
+            )
+            await self.state.set_state(user_id, "waiting_for_aspect_ratio")
+
+        await self.state.set_data(user_id, user_data)
+        return
+
+    async def handle_aspect_ratio(self, message: Message, user_data: dict) -> str:
+        """Handle aspect ratio selection"""
+        user_id = message.from_id
+        text = (message.text or "").strip().lower()
+        model = user_data.get("chosen_model", "nanabanana")
+        
+        if "пропустить" in text:
+            user_data["aspect_ratio"] = "1:1"
+        else:
+            allowed = ["1:1", "4:3", "3:4", "16:9", "9:16", "2:3", "3:2", "21:9", "5:4", "4:5"]
+            if text not in allowed:
+                await message.answer("⚠️ Выберите соотношение из вариантов на клавиатуре.")
+                return
+            user_data["aspect_ratio"] = text
+            
+        await self.state.set_data(user_id, user_data)
+        
+        if model in ("seedream", "nanabanana_pro", "nanabanana_2"):
+            from app.vk.keyboards import get_quality_keyboard
+            await message.answer(
+                "⚙️ Шаг 3: Выберите качество генерации:",
+                keyboard=get_quality_keyboard(model)
+            )
+            await self.state.set_state(user_id, "waiting_for_quality")
+        else:
+            user_data["quality"] = "1K"
+            await self.state.set_data(user_id, user_data)
+            await message.answer(
+                "✍️ Шаг 3: Описание изменений (или пропустить с '.'):",
                 keyboard=get_cancel_keyboard()
             )
             await self.state.set_state(user_id, "waiting_for_prompt")
+        return
 
+    async def handle_quality(self, message: Message, user_data: dict) -> str:
+        """Handle quality selection"""
+        user_id = message.from_id
+        text = (message.text or "").strip().lower()
+        model = user_data.get("chosen_model", "nanabanana")
+        
+        if "пропустить" in text:
+            user_data["quality"] = "basic" if model == "seedream" else "1K"
+        else:
+            if "high" in text: user_data["quality"] = "high"
+            elif "basic" in text: user_data["quality"] = "basic"
+            elif "1k" in text: user_data["quality"] = "1K"
+            elif "2k" in text: user_data["quality"] = "2K"
+            elif "4k" in text: user_data["quality"] = "4K"
+            else:
+                await message.answer("⚠️ Выберите качество из вариантов на клавиатуре.")
+                return
+                
         await self.state.set_data(user_id, user_data)
+        
+        await message.answer(
+            "✍️ Шаг 4: Описание изменений (или пропустить с '.'):",
+            keyboard=get_cancel_keyboard()
+        )
+        await self.state.set_state(user_id, "waiting_for_prompt")
         return
 
     async def handle_motion_video_upload(self, message: Message, user_data: dict) -> str:
@@ -712,6 +782,15 @@ class VKHandlers:
         session_type = user_data.get("session_type", "photo")
         prompt = (message.text or "").strip()
 
+        # Checking prompt lengths based on models
+        if "seedream" in model and len(prompt) > 2996:
+            await message.answer("⚠️ Ваш текст превышает лимит в 2996 символов. Пожалуйста, сократите его и отправьте заново.", keyboard=get_cancel_keyboard())
+            return
+            
+        if "nanabanana" in model and len(prompt) > 20000:
+            await message.answer("⚠️ Ваш текст слишком длинный (максимум 20 000 символов). Пожалуйста, сократите его и отправьте заново.", keyboard=get_cancel_keyboard())
+            return
+
         # Safety final balance check (should already be covered, just fallback)
         if not await has_balance(user_id, model):
             await self.state.clear_state(user_id)
@@ -759,13 +838,17 @@ class VKHandlers:
             )
             time_msg = "⏳ Генерация видео началась (3-5 мин)."
         else:
+            aspect_ratio = user_data.get("aspect_ratio", "1:1")
+            quality = user_data.get("quality", "1K")
             task = asyncio.create_task(
                 background_photo_gen(
                     self.bot,
                     user_id,
                     photo_urls,
                     prompt,
-                    model
+                    model,
+                    aspect_ratio,
+                    quality
                 )
             )
             time_msg = "⏳ Генерация фото началась (1-2 мин)."

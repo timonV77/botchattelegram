@@ -39,27 +39,28 @@ async def charge(user_id: int, model_or_cost):
 async def generate_photo(
     image_urls: List[str],
     prompt: str,
-    model: str
+    model: str,
+    aspect_ratio: str = "1:1",
+    quality: str = "1K"
 ) -> Tuple[Optional[bytes], Optional[str], Optional[str]]:
     try:
         logging.info("--- 🛠 VK Фото-генерация: %s ---", model)
 
         if model == "nanabanana":
             engine = NanoBanana()
-            return await engine.generate(prompt, image_urls=image_urls)
+            return await engine.generate(prompt, image_urls=image_urls, aspect_ratio=aspect_ratio)
 
         elif model == "nanabanana_2":
             engine = NanoBanana(version="v2")
-            return await engine.generate(prompt, image_urls=image_urls)
+            return await engine.generate(prompt, image_urls=image_urls, aspect_ratio=aspect_ratio)
 
         elif model == "nanabanana_pro":
             engine = NanoBananaPro()
-            return await engine.generate(prompt, image_urls=image_urls)
+            return await engine.generate(prompt, image_urls=image_urls, aspect_ratio=aspect_ratio, resolution=quality)
 
         elif model == "seedream":
             engine = Seedream()
-
-            return await engine.generate(prompt, image_urls=image_urls)
+            return await engine.generate(prompt, image_urls=image_urls, aspect_ratio=aspect_ratio, quality=quality)
 
         return None, None, None
     except Exception as e:

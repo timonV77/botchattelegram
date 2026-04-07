@@ -156,6 +156,7 @@ async def prodamus_vk_webhook(request: web.Request):
     # ─── 3. Разбираем поля платежа ───────────────────────────────────────
     payment_status = data.get("payment_status")
     order_data = data.get("order_num") or data.get("order_id")
+    prodamus_order_id = data.get("order_id") or order_data
     reported_sum = data.get("sum") or data.get("amount") or 0
 
     logger.info(
@@ -235,18 +236,18 @@ async def prodamus_vk_webhook(request: web.Request):
                 async with pool.acquire() as conn:
                     existing = await conn.fetchrow(
                         "SELECT id, created_at, amount FROM payment_logs WHERE order_id = $1 AND status = 'success'",
-                        str(order_data)
+                        str(prodamus_order_id)
                     )
                     if existing:
                         logger.error(
                             f"[WEBHOOK] ⚠️ ДУБЛИКАТ ПЛАТЕЖА!\n"
-                            f"  order_id={order_data!r} уже обработан ранее:\n"
+                            f"  order_id={prodamus_order_id!r} (order_num={order_data!r}) уже обработан ранее:\n"
                             f"  payment_log_id={existing['id']}, дата={existing['created_at']}, сумма={existing['amount']}\n"
                             f"  ❌ Повторное зачисление ОТМЕНЕНО для защиты от двойного списания"
                         )
                         return web.Response(text="Duplicate", status=200)
                     else:
-                        logger.info(f"[WEBHOOK] ✅ Дубликат не найден — order_id={order_data!r} новый")
+                        logger.info(f"[WEBHOOK] ✅ Дубликат не найден — order_id={prodamus_order_id!r} новый")
             else:
                 logger.warning("[WEBHOOK] ⚠️ DB pool недоступен — проверка дубликатов ПРОПУЩЕНА")
         except Exception as dup_err:
@@ -310,8 +311,8 @@ async def prodamus_vk_webhook(request: web.Request):
 
         # ─── 6. Лог платежа в БД ────────────────────────────────────────
         try:
-            await db.log_payment(user_id, amount, "success", str(order_data), dict(data))
-            logger.info(f"[WEBHOOK] ✅ Платёж записан в payment_logs: order={order_data}")
+            await db.log_payment(user_id, amount, "success", str(prodamus_order_id), dict(data))
+            logger.info(f"[WEBHOOK] ✅ Платёж записан в payment_logs: order_id={prodamus_order_id}")
         except Exception as log_err:
             logger.error(
                 f"[WEBHOOK] ❌ ОШИБКА ЗАПИСИ в payment_logs!\n"

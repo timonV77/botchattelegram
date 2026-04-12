@@ -71,8 +71,8 @@ async def start_cmd(message: types.Message, state: FSMContext):
 
 @router.message(F.text == "📸 Начать фотосессию")
 async def start_photo_from_menu(message: types.Message, state: FSMContext):
-    if not await has_balance(message.from_user.id, "nanabanana"):
-        return await message.answer("❌ Недостаточно генераций.", reply_markup=main_kb())
+    # if not await has_balance(message.from_user.id, "nanabanana"):
+    #     return await message.answer("❌ Недостаточно генераций.", reply_markup=main_kb())
 
     await state.clear()
     await message.answer("🤖 Выберите нейросеть для фото:", reply_markup=model_inline())
@@ -81,8 +81,8 @@ async def start_photo_from_menu(message: types.Message, state: FSMContext):
 
 @router.message(F.text == "🎬 Оживить фото")
 async def start_animation_from_menu(message: types.Message, state: FSMContext):
-    if not await has_balance(message.from_user.id, "kling_5"):
-        return await message.answer("❌ Недостаточно генераций ⚡", reply_markup=main_kb())
+    # if not await has_balance(message.from_user.id, "kling_5"):
+    #     return await message.answer("❌ Недостаточно генераций ⚡", reply_markup=main_kb())
 
     await state.clear()
     await message.answer("🎬 Выберите режим оживления:", reply_markup=kling_inline())

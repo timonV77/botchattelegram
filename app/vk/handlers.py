@@ -645,7 +645,10 @@ class VKHandlers:
             user_data["quality"] = "1K"
             await self.state.set_data(user_id, user_data)
             await message.answer(
-                "✍️ Шаг 3: Описание изменений (или пропустить с '.'):",
+                "✍️ Шаг 3: Описание изменений (или пропустить с '.'):\n\n"
+                "✨ Не знаете что написать?\n"
+                "💡 Готовые и проверенные промпты мы публикуем на стене нашей группы:\n"
+                "👉 https://vk.com/club237140033",
                 keyboard=get_cancel_keyboard()
             )
             await self.state.set_state(user_id, "waiting_for_prompt")
@@ -672,7 +675,10 @@ class VKHandlers:
         await self.state.set_data(user_id, user_data)
         
         await message.answer(
-            "✍️ Шаг 4: Описание изменений (или пропустить с '.'):",
+            "✍️ Шаг 4: Описание изменений (или пропустить с '.'):\n\n"
+            "✨ Не знаете что написать?\n"
+            "💡 Готовые и проверенные промпты мы публикуем на стене нашей группы:\n"
+            "👉 https://vk.com/club237140033",
             keyboard=get_cancel_keyboard()
         )
         await self.state.set_state(user_id, "waiting_for_prompt")
@@ -768,7 +774,11 @@ class VKHandlers:
             return
 
         await message.answer(
-            "✅ Видео принято!\n\n✍️ Шаг 3: Опишите желаемое движение (или '.' для пропуска):",
+            "✅ Видео принято!\n\n"
+            "✍️ Шаг 3: Опишите желаемое движение (или '.' для пропуска):\n\n"
+            "✨ Не знаете что написать?\n"
+            "💡 Готовые и красивые промпты мы публикуем на стене нашей группы:\n"
+            "👉 https://vk.com/club237140033",
             keyboard=get_cancel_keyboard()
         )
         await self.state.set_state(user_id, "waiting_for_prompt")

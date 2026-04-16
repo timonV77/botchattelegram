@@ -5,7 +5,7 @@ from aiogram import Bot
 from typing import Optional, Tuple
 
 from app.config import settings
-from app.network import get_connector, upload_file_to_catbox
+from app.network import get_connector, upload_file_to_0x0, upload_file_to_litterbox
 
 
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".avi", ".mkv")
@@ -59,10 +59,15 @@ async def get_telegram_photo_url(bot: Bot, file_id: str) -> Optional[str]:
         except Exception as tg_err:
             logging.warning("⚠️ Telegraph недоступен (%s), пробуем Catbox...", tg_err)
 
-        # Fallback: Catbox.moe
-        catbox_url = await upload_file_to_catbox(file_data, filename="image.jpg")
-        if catbox_url:
-            return catbox_url
+        # Fallback 0x0.st
+        url_0x0 = await upload_file_to_0x0(file_data, filename="image.jpg")
+        if url_0x0:
+            return url_0x0
+
+        # Fallback Litterbox
+        url_litter = await upload_file_to_litterbox(file_data, filename="image.jpg")
+        if url_litter:
+            return url_litter
 
         return tg_url
 

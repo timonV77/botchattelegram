@@ -5,7 +5,7 @@ from aiogram import Bot
 from typing import Optional, Tuple
 
 from app.config import settings
-from app.network import get_connector
+from app.network import get_connector, upload_file_to_catbox
 
 
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".avi", ".mkv")
@@ -31,32 +31,40 @@ async def get_telegram_photo_url(bot: Bot, file_id: str) -> Optional[str]:
         if _is_video(file.file_path):
             return tg_url
 
-        timeout = aiohttp.ClientTimeout(total=40, connect=10, sock_read=20)
+        # Быстрый таймаут — если telegra.ph недоступен, не тормозим пользователя
+        timeout = aiohttp.ClientTimeout(total=20, connect=5, sock_read=10)
 
         async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout) as session:
             async with session.get(tg_url) as resp:
                 if resp.status != 200:
-                    logging.warning("⚠️ Не удалось скачать файл из TG для Telegraph, status=%s", resp.status)
+                    logging.warning("⚠️ Не удалось скачать файл из TG, status=%s", resp.status)
                     return tg_url
                 file_data = await resp.read()
 
-            form = aiohttp.FormData()
-            form.add_field("file", file_data, filename="image.jpg", content_type="image/jpeg")
+        # Пробуем Telegraph
+        try:
+            telegraph_timeout = aiohttp.ClientTimeout(total=8, connect=4, sock_read=6)
+            async with aiohttp.ClientSession(connector=get_connector(), timeout=telegraph_timeout) as session:
+                form = aiohttp.FormData()
+                form.add_field("file", file_data, filename="image.jpg", content_type="image/jpeg")
 
-            async with session.post("https://telegra.ph/upload", data=form) as up_resp:
-                if up_resp.status != 200:
+                async with session.post("https://telegra.ph/upload", data=form) as up_resp:
+                    if up_resp.status == 200:
+                        result = await up_resp.json(content_type=None)
+                        if isinstance(result, list) and result and isinstance(result[0], dict):
+                            path = result[0].get("src")
+                            if path:
+                                return f"https://telegra.ph{path}"
                     logging.warning("⚠️ Telegraph upload status=%s", up_resp.status)
-                    return tg_url
+        except Exception as tg_err:
+            logging.warning("⚠️ Telegraph недоступен (%s), пробуем Catbox...", tg_err)
 
-                result = await up_resp.json(content_type=None)
-                # Telegraph обычно возвращает list[{"src": "..."}]
-                if isinstance(result, list) and result and isinstance(result[0], dict):
-                    path = result[0].get("src")
-                    if path:
-                        return f"https://telegra.ph{path}"
+        # Fallback: Catbox.moe
+        catbox_url = await upload_file_to_catbox(file_data, filename="image.jpg")
+        if catbox_url:
+            return catbox_url
 
-                logging.warning("⚠️ Неожиданный ответ Telegraph: type=%s body=%r", type(result).__name__, result)
-                return tg_url
+        return tg_url
 
     except Exception as e:
         logging.error("❌ Ошибка в get_telegram_photo_url: %s", e)

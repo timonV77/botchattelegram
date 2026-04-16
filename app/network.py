@@ -36,8 +36,8 @@ async def upload_file_to_host(file_bytes: bytes, filename: str = None) -> Option
         content_type = 'video/mp4' if filename and filename.endswith('.mp4') else 'image/jpeg'
         form.add_field('file', file_bytes, filename=filename or 'file.jpg', content_type=content_type)
         
-        # Увеличиваем таймаут для загрузки до 300 секунд
-        timeout = aiohttp.ClientTimeout(total=300, connect=30, sock_read=120)
+        # Короткий таймаут — telegra.ph может быть недоступен
+        timeout = aiohttp.ClientTimeout(total=8, connect=4, sock_read=6)
         async with aiohttp.ClientSession(connector=get_connector(), timeout=timeout) as session:
             async with session.post('https://telegra.ph/upload', data=form) as resp:
                 if resp.status == 200:

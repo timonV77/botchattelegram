@@ -11,10 +11,9 @@ from app.services.models.video.kling_motion import KlingMotionControl
 import database as db
 
 COSTS = {
-    "nanabanana": 17,
-    "nanabanana_pro": 55,
-    "seedream": 26,
-    "nanabanana_2": 28,
+    "nanabanana": 1,
+    "nanabanana_pro": 5,
+    "seedream": 2,
     "kling_5": 5,
     "kling_10": 10,
     "kling_motion": 10

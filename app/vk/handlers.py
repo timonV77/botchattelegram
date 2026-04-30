@@ -33,6 +33,8 @@ MODEL_NAMES = {
     "nanabanana_2": "🍌 NanoBanana 2",
     "nanabanana_pro": "💎 NanoBanana PRO",
     "seedream": "🌊 SeeDream 5.0 Lite",
+    "grok_imagine": "🤖 Grok",
+    "gpt5_image": "🧠 GPT-5",
     "kling_motion_720": "🎬 Motion 720p",
     "kling_motion_1080": "🎬 Motion 1080p",
 }
@@ -508,6 +510,10 @@ class VKHandlers:
             model = "nanabanana"
         elif "seedream" in text or "🌊" in text or "5.0" in text or "lite" in text:
             model = "seedream"
+        elif "grok" in text or "🤖" in text:
+            model = "grok_imagine"
+        elif "gpt-5" in text or "gpt5" in text or "🧠" in text:
+            model = "gpt5_image"
         elif "720" in text:
             model = "kling_motion_720"
         elif "1080" in text:
@@ -606,6 +612,19 @@ class VKHandlers:
                 keyboard=get_cancel_keyboard()
             )
             await self.state.set_state(user_id, "waiting_for_motion_video")
+        elif model == "gpt5_image":
+            # GPT-5 Image не поддерживает aspect_ratio — сразу к промпту
+            user_data["aspect_ratio"] = "1:1"
+            user_data["quality"] = "1K"
+            await self.state.set_data(user_id, user_data)
+            await message.answer(
+                "✍️ Шаг 2: Описание изменений (или пропустить с '.'):\n\n"
+                "✨ Не знаете что написать?\n"
+                "💡 Готовые и проверенные промпты мы публикуем на стене нашей группы:\n"
+                "👉 https://vk.com/club237140033",
+                keyboard=get_cancel_keyboard()
+            )
+            await self.state.set_state(user_id, "waiting_for_prompt")
         else:
             from app.vk.keyboards import get_aspect_ratio_keyboard
             await message.answer(

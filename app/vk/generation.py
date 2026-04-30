@@ -6,6 +6,8 @@ import os
 from app.vk.models.images.nanabanana import NanoBanana
 from app.vk.models.images.nanabanana_pro import NanoBananaPro
 from app.vk.models.images.seedream import Seedream
+from app.vk.models.images.grok_imagine import GrokImagine
+from app.vk.models.images.gpt5_image import GPT5Image
 from app.vk.models.video.kling_motion import KlingMotionControl
 
 import vk_database as db
@@ -16,6 +18,8 @@ COSTS = {
     "nanabanana_2": 28,
     "nanabanana_pro": 55,
     "seedream": 26,
+    "grok_imagine": 14,
+    "gpt5_image": 25,
     "kling_motion_720": 70,   # 14р/сек * 5сек = 70р (предполагаем 5сек)
     "kling_motion_1080": 100, # 20р/сек * 5сек = 100р (предполагаем 5сек)
 }
@@ -61,6 +65,14 @@ async def generate_photo(
         elif model == "seedream":
             engine = Seedream()
             return await engine.generate(prompt, image_urls=image_urls, aspect_ratio=aspect_ratio, quality=quality)
+
+        elif model == "grok_imagine":
+            engine = GrokImagine()
+            return await engine.generate(prompt, image_urls=image_urls, aspect_ratio=aspect_ratio)
+
+        elif model == "gpt5_image":
+            engine = GPT5Image()
+            return await engine.generate(prompt, image_urls=image_urls)
 
         return None, None, None
     except Exception as e:

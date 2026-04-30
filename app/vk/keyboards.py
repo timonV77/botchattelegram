@@ -85,7 +85,9 @@ def get_aspect_ratio_keyboard(model: str) -> str:
     """Клавиатура выбора соотношения сторон"""
     kb = Keyboard(one_time=True, inline=False)
     
-    if model == "seedream":
+    if model == "grok_imagine":
+        ratios = ["1:1", "2:3", "3:2"]
+    elif model == "seedream":
         ratios = ["1:1", "4:3", "3:4", "16:9", "9:16", "2:3", "3:2", "21:9"]
     else:
         # nanabanana, nanabanana_2, nanabanana_pro

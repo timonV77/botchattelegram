@@ -38,7 +38,7 @@ class GrokImagine:
 
         # Референсные изображения (если есть)
         if image_urls:
-            valid_urls = image_urls[:8]
+            valid_urls = image_urls[:4]
             payload_input["images"] = [{"type": "url", "data": url} for url in valid_urls]
 
         payload = {

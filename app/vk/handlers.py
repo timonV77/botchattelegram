@@ -561,6 +561,11 @@ class VKHandlers:
                 "📸 Шаг 1: Пришлите фото (лицо):",
                 keyboard=get_cancel_keyboard()
             )
+        elif model == "grok_imagine":
+            await message.answer(
+                "📸 Шаг 1: Пришлите от 1 до 4 фото для обработки (в одном сообщении):",
+                keyboard=get_cancel_keyboard()
+            )
         else:
             await message.answer(
                 "📸 Шаг 1: Пришлите от 1 до 8 фото для обработки (в одном сообщении):",
@@ -598,10 +603,13 @@ class VKHandlers:
             )
             return
 
-        if len(photo_urls) > 8:
-            await message.answer("⚠️ Вы прикрепили больше 8 фото. Мы будем использовать только первые 8.")
+        # Grok Imagine поддерживает максимум 4 фото, остальные — до 8
+        max_photos = 4 if model == "grok_imagine" else 8
 
-        user_data["photo_urls"] = photo_urls[:8]
+        if len(photo_urls) > max_photos:
+            await message.answer(f"⚠️ Вы прикрепили больше {max_photos} фото. Мы будем использовать только первые {max_photos}.")
+
+        user_data["photo_urls"] = photo_urls[:max_photos]
 
         if "motion" in model:
             await message.answer(

@@ -192,6 +192,21 @@ async def get_referral_stats(user_id: int) -> tuple[int, int]:
         return (0, 0)
 
 
+async def get_referrals_count(referrer_id: int) -> int:
+    """Сколько пользователей привязаны к рефереру (по referrer_id)."""
+    await init_db()
+    try:
+        async with _pool.acquire() as conn:
+            count = await conn.fetchval(
+                "SELECT COUNT(*) FROM users WHERE referrer_id = $1",
+                int(referrer_id),
+            )
+            return int(count or 0)
+    except Exception as e:
+        logging.error(f"❌ VK DB get_referrals_count {referrer_id}: {e}")
+        return 0
+
+
 async def add_referral_earnings(referrer_id: int, amount: int) -> bool:
     """Начислить реферальные рубли (30% от пополнения приглашённого). Не трогает основной balance."""
     if amount <= 0:

@@ -1038,6 +1038,7 @@ class VKHandlers:
         try:
             await db.create_new_user(user_id)
             total_e, avail = await db.get_referral_stats(user_id)
+            refs_count = await db.get_referrals_count(user_id)
         except Exception as e:
             logger.error(f"referral menu DB: {e}")
             await message.answer("⚠️ Не удалось загрузить данные.", keyboard=get_main_keyboard(user_id))
@@ -1058,6 +1059,7 @@ class VKHandlers:
             "💎 Зарабатывайте вместе с Mira Promt\n\n"
             "За каждое пополнение баланса приглашённым пользователем вам начисляется 30% от суммы "
             "платежа на отдельный реферальный счёт (не путать с балансом для генераций).\n\n"
+            f"👥 Приглашено рефералов: {refs_count}\n"
             f"📊 Всего начислено с партнёрки: {total_e} руб.\n"
             f"💵 Доступно к выводу: {avail} руб.\n\n"
             + "\n".join(invite_lines)

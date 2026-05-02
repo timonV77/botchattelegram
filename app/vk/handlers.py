@@ -6,7 +6,7 @@ import json
 import aiohttp
 from typing import Optional, List
 from vkbottle.bot import Bot, Message
-from vkbottle import PhotoMessageUploader, VideoUploader
+from vkbottle import PhotoMessageUploader, VideoUploader, GroupEventType, GroupTypes, ShowSnackbarEvent
 
 from app.vk.keyboards import (
     get_main_keyboard,
@@ -14,6 +14,11 @@ from app.vk.keyboards import (
     get_video_model_keyboard,
     get_cancel_keyboard,
     get_admin_keyboard,
+    VK_REFERRAL_MENU_BUTTON,
+    VK_REFERRAL_WITHDRAW_BUTTON,
+    VK_REFERRAL_BACK_BUTTON,
+    get_referral_section_keyboard,
+    get_admin_withdraw_complete_keyboard,
 )
 from app.vk.state_manager import VKStateManager
 from app.vk.file_handler import download_vk_photo, download_vk_video, bytes_to_base64_data_uri
@@ -27,6 +32,9 @@ import vk_database as db
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Минимальная сумма вывода с реферального счёта (руб.)
+MIN_REFERRAL_WITHDRAW = 100
 
 MODEL_NAMES = {
     "nanabanana": "🍌 NanoBanana",
@@ -110,9 +118,24 @@ async def background_photo_gen(
 
         img_bytes, ext, _ = result
 
-        # Upload photo to VK
-        photo_uploader = PhotoMessageUploader(bot.api)
-        attachment = await photo_uploader.upload(img_bytes)
+        if not img_bytes or len(img_bytes) < 64:
+            await bot.api.messages.send(
+                user_id=user_id,
+                message="⚠️ Пустой файл изображения от нейросети.",
+                keyboard=get_main_keyboard(user_id),
+                random_id=0,
+            )
+            return
+
+        ext = (ext or "jpg").lower().lstrip(".")
+        if ext in ("jpeg",):
+            ext = "jpg"
+        if ext not in ("jpg", "png", "webp"):
+            ext = "jpg"
+
+        # Для токена сообщества peer_id обязателен: иначе saveMessagesPhoto часто даёт «photo is undefined»
+        photo_uploader = PhotoMessageUploader(bot.api, attachment_name=f"result.{ext}")
+        attachment = await photo_uploader.upload(img_bytes, peer_id=user_id)
 
         # Send result photo
         await bot.api.messages.send(
@@ -237,6 +260,9 @@ class VKHandlers:
 
         # Register handlers
         self.bot.on.message()(self.on_message)
+        self.bot.on.raw_event(GroupEventType.MESSAGE_EVENT, dataclass=GroupTypes.MessageEvent)(
+            self.on_message_event
+        )
 
     @staticmethod
     def _is_start_command(message: Message, normalized_text: str) -> bool:
@@ -276,7 +302,16 @@ class VKHandlers:
         user_data = await self.state.get_data(user_id)
 
         # --- CANCEL/BACK ---
-        if text in ("отменить", "назад", "❌ отменить", "🔙 назад", "отмена", "❌", "🔙"):
+        if text in (
+            "отменить",
+            "назад",
+            "❌ отменить",
+            "🔙 назад",
+            "отмена",
+            "❌",
+            "🔙",
+            VK_REFERRAL_BACK_BUTTON.lower(),
+        ):
             await self.state.clear_state(user_id)
             await self.state.clear_data(user_id)
             await message.answer(
@@ -329,6 +364,15 @@ class VKHandlers:
         elif state == "waiting_for_deposit_amount":
             return await self.handle_deposit_amount(message, user_data)
 
+        elif state == "waiting_referral_withdraw_amount":
+            return await self.handle_referral_withdraw_amount(message, user_data)
+
+        elif state == "waiting_referral_withdraw_method":
+            return await self.handle_referral_withdraw_method(message, user_data)
+
+        elif state == "waiting_referral_withdraw_details":
+            return await self.handle_referral_withdraw_details(message, user_data)
+
         # --- PHOTO SESSION ---
         elif text in ("начать фотосессию", "📸 начать фотосессию"):
             return await self.handle_start_photo(message)
@@ -348,6 +392,12 @@ class VKHandlers:
         # --- HELP ---
         elif text in ("помощь", "🆘 помощь", "🆘"):
             return await self.handle_help(message)
+
+        elif text == VK_REFERRAL_MENU_BUTTON.lower():
+            return await self.handle_referral_menu(message)
+
+        elif text == VK_REFERRAL_WITHDRAW_BUTTON.lower():
+            return await self.handle_referral_withdraw_start(message)
 
         else:
             await message.answer(
@@ -982,4 +1032,222 @@ class VKHandlers:
         help_text = "По любым вопросам или проблемам (включая пополнение) пишите в нашу поддержку: @esya0010"
         await message.answer(help_text, keyboard=get_main_keyboard(user_id))
         return
-        return
+
+    async def handle_referral_menu(self, message: Message) -> None:
+        user_id = message.from_id
+        try:
+            await db.create_new_user(user_id)
+            total_e, avail = await db.get_referral_stats(user_id)
+        except Exception as e:
+            logger.error(f"referral menu DB: {e}")
+            await message.answer("⚠️ Не удалось загрузить данные.", keyboard=get_main_keyboard(user_id))
+            return
+
+        invite_lines = [
+            f"🆔 Ваш ID для приглашений: {user_id}",
+            "",
+            "Попросите друга написать боту одну из команд:",
+            f"• /start {user_id}",
+            f"• /start ref{user_id}",
+        ]
+        if settings.vk_group_id:
+            invite_lines.append("")
+            invite_lines.append(f"Или откройте чат: https://vk.com/write-{settings.vk_group_id}")
+
+        body = (
+            "💎 Зарабатывайте вместе с Mira Promt\n\n"
+            "За каждое пополнение баланса приглашённым пользователем вам начисляется 30% от суммы "
+            "платежа на отдельный реферальный счёт (не путать с балансом для генераций).\n\n"
+            f"📊 Всего начислено с партнёрки: {total_e} руб.\n"
+            f"💵 Доступно к выводу: {avail} руб.\n\n"
+            + "\n".join(invite_lines)
+        )
+        await message.answer(body, keyboard=get_referral_section_keyboard())
+
+    async def handle_referral_withdraw_start(self, message: Message) -> None:
+        user_id = message.from_id
+        _, avail = await db.get_referral_stats(user_id)
+        if avail < MIN_REFERRAL_WITHDRAW:
+            await message.answer(
+                f"⚠️ Минимум для вывода: {MIN_REFERRAL_WITHDRAW} руб. "
+                f"Сейчас доступно: {avail} руб.",
+                keyboard=get_referral_section_keyboard(),
+            )
+            return
+        await self.state.set_state(user_id, "waiting_referral_withdraw_amount")
+        await self.state.set_data(user_id, {})
+        await message.answer(
+            f"💵 Введите сумму вывода в рублях (целое число).\n"
+            f"Доступно: {avail} руб. Минимум: {MIN_REFERRAL_WITHDRAW} руб.",
+            keyboard=get_cancel_keyboard(),
+        )
+
+    async def handle_referral_withdraw_amount(self, message: Message, user_data: dict) -> None:
+        user_id = message.from_id
+        raw = (message.text or "").strip()
+        try:
+            amount = int(raw)
+        except ValueError:
+            await message.answer("⚠️ Введите целое число рублей.", keyboard=get_cancel_keyboard())
+            return
+        _, avail = await db.get_referral_stats(user_id)
+        if amount < MIN_REFERRAL_WITHDRAW:
+            await message.answer(
+                f"⚠️ Сумма не меньше {MIN_REFERRAL_WITHDRAW} руб.",
+                keyboard=get_cancel_keyboard(),
+            )
+            return
+        if amount > avail:
+            await message.answer(
+                f"⚠️ Недостаточно средств. Доступно: {avail} руб.",
+                keyboard=get_cancel_keyboard(),
+            )
+            return
+        user_data["withdraw_amount"] = amount
+        await self.state.set_data(user_id, user_data)
+        await self.state.set_state(user_id, "waiting_referral_withdraw_method")
+        await message.answer(
+            "💳 Укажите способ вывода (например: СБП, карта, банковский перевод):",
+            keyboard=get_cancel_keyboard(),
+        )
+
+    async def handle_referral_withdraw_method(self, message: Message, user_data: dict) -> None:
+        method = (message.text or "").strip()
+        if not method or len(method) < 2:
+            await message.answer("⚠️ Укажите корректный способ вывода.", keyboard=get_cancel_keyboard())
+            return
+        lowered = method.lower()
+        if "крипт" in lowered or "usdt" in lowered or "btc" in lowered or "eth" in lowered:
+            await message.answer(
+                "⚠️ Вывод в криптовалюте недоступен. Выберите СБП, карту или банковский перевод.",
+                keyboard=get_cancel_keyboard(),
+            )
+            return
+        user_data["withdraw_method"] = method
+        user_id = message.from_id
+        await self.state.set_data(user_id, user_data)
+        await self.state.set_state(user_id, "waiting_referral_withdraw_details")
+        await message.answer(
+            "📝 Теперь укажите реквизиты для перевода этим способом:",
+            keyboard=get_cancel_keyboard(),
+        )
+
+    async def handle_referral_withdraw_details(self, message: Message, user_data: dict) -> None:
+        user_id = message.from_id
+        details = (message.text or "").strip()
+        amount = int(user_data.get("withdraw_amount") or 0)
+        method = (user_data.get("withdraw_method") or "").strip()
+        if not details or len(details) < 5:
+            await message.answer("⚠️ Опишите реквизиты подробнее.", keyboard=get_cancel_keyboard())
+            return
+        if not method:
+            await message.answer("⚠️ Способ вывода не указан. Начните заявку заново.", keyboard=get_main_keyboard(user_id))
+            await self.state.clear_state(user_id)
+            await self.state.clear_data(user_id)
+            return
+
+        full_details = f"Способ: {method}\nРеквизиты: {details}"
+        req_id = await db.create_withdrawal_request(user_id, amount, full_details)
+        await self.state.clear_state(user_id)
+        await self.state.clear_data(user_id)
+        if not req_id:
+            await message.answer(
+                "⚠️ Не удалось создать заявку. Проверьте сумму и попробуйте снова.",
+                keyboard=get_main_keyboard(user_id),
+            )
+            return
+
+        await message.answer(
+            f"✅ Заявка №{req_id} отправлена администратору. Сумма: {amount} руб.\n"
+            "Ожидайте перевода.",
+            keyboard=get_main_keyboard(user_id),
+        )
+
+        admin_text = (
+            f"📤 Новая заявка на вывод реферальных средств\n\n"
+            f"№ заявки: {req_id}\n"
+            f"Пользователь: vk.com/id{user_id}\n"
+            f"🆔 ID: {user_id}\n"
+            f"💵 Сумма: {amount} руб.\n"
+            f"💳 Способ вывода: {method}\n\n"
+            f"Реквизиты:\n{details}"
+        )
+        for admin_id in settings.vk_admin_ids:
+            try:
+                await self.bot.api.messages.send(
+                    user_id=admin_id,
+                    message=admin_text,
+                    keyboard=get_admin_withdraw_complete_keyboard(req_id),
+                    random_id=0,
+                )
+            except Exception as e:
+                logger.error(f"Не удалось отправить заявку админу {admin_id}: {e}")
+
+    async def _answer_message_event(self, event: GroupTypes.MessageEvent, snackbar: str) -> None:
+        await self.bot.api.messages.send_message_event_answer(
+            event_id=event.object.event_id,
+            user_id=event.object.user_id,
+            peer_id=event.object.peer_id,
+            event_data=ShowSnackbarEvent(text=snackbar).model_dump_json(),
+        )
+
+    async def on_message_event(self, event: GroupTypes.MessageEvent) -> None:
+        """Callback-кнопка «Завершено» у заявки на вывод (только админы)."""
+        uid = event.object.user_id
+        if uid not in settings.vk_admin_ids:
+            await self._answer_message_event(event, "Нет доступа")
+            return
+
+        payload = event.object.payload
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                await self._answer_message_event(event, "Ошибка данных")
+                return
+        if not isinstance(payload, dict) or payload.get("action") != "referral_withdraw_done":
+            return
+
+        rid = payload.get("rid")
+        try:
+            rid = int(rid)
+        except (TypeError, ValueError):
+            await self._answer_message_event(event, "Неверная заявка")
+            return
+
+        done = await db.complete_withdrawal_request(rid)
+        if not done:
+            await self._answer_message_event(event, "Уже выполнено или заявка не найдена")
+            return
+
+        target_uid, amount = done
+        await self._answer_message_event(event, "Заявка закрыта")
+
+        cmid = getattr(event.object, "conversation_message_id", None)
+        if cmid is not None:
+            try:
+                new_text = (
+                    f"✅ ВЫПОЛНЕНО (заявка №{rid})\n\n"
+                    f"Пользователь: vk.com/id{target_uid}\n"
+                    f"Сумма: {amount} руб."
+                )
+                await self.bot.api.messages.edit(
+                    peer_id=event.object.peer_id,
+                    conversation_message_id=cmid,
+                    message=new_text,
+                )
+            except Exception as e:
+                logger.error(f"messages.edit после вывода: {e}")
+
+        try:
+            await self.bot.api.messages.send(
+                user_id=target_uid,
+                message=(
+                    f"✅ Заявка на вывод №{rid} на сумму {amount} руб. отмечена как выполненная.\n"
+                    "Спасибо, что с нами!"
+                ),
+                keyboard=get_main_keyboard(target_uid),
+                random_id=0,
+            )
+        except Exception as e:
+            logger.error(f"Уведомление пользователю {target_uid}: {e}")

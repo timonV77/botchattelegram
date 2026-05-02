@@ -23,7 +23,16 @@ async def _download_content_bytes(session: aiohttp.ClientSession, url: str) -> T
             if response.status != 200: return None, None, target_url
             data = await response.read()
             content_type = response.headers.get("Content-Type", "").lower()
-            ext = "mp4" if "video" in content_type else "jpg"
+            if "video" in content_type:
+                ext = "mp4"
+            elif "png" in content_type:
+                ext = "png"
+            elif "webp" in content_type:
+                ext = "webp"
+            elif "jpeg" in content_type or "jpg" in content_type:
+                ext = "jpg"
+            else:
+                ext = "jpg"
             return data, ext, target_url
     except Exception as e:
         logging.error(f"❌ Ошибка скачивания: {e}")

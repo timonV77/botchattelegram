@@ -1,4 +1,9 @@
-from vkbottle import Keyboard, KeyboardButtonColor, Text, OpenLink
+from vkbottle import Keyboard, KeyboardButtonColor, Text, OpenLink, Callback
+
+# Главное меню VK — партнёрка (до 40 символов на кнопку ВК)
+VK_REFERRAL_MENU_BUTTON = "Зарабатывать вместе с Mira Promt"
+VK_REFERRAL_WITHDRAW_BUTTON = "💵 Заявка на вывод"
+VK_REFERRAL_BACK_BUTTON = "🔙 В главное меню"
 
 
 def get_payment_keyboard(url: str) -> str:
@@ -29,6 +34,8 @@ def get_main_keyboard(user_id: int | None = None) -> str:
     kb.row()
     kb.add(Text("💰 Мой баланс"), color=KeyboardButtonColor.SECONDARY)
     kb.add(Text("💳 Пополнить"), color=KeyboardButtonColor.SECONDARY)
+    kb.row()
+    kb.add(Text(VK_REFERRAL_MENU_BUTTON), color=KeyboardButtonColor.PRIMARY)
     kb.row()
     kb.add(Text("🆘 Помощь"), color=KeyboardButtonColor.SECONDARY)
     
@@ -79,6 +86,27 @@ def get_cancel_keyboard() -> str:
 def get_empty_keyboard() -> str:
     """Пустая клавиатура (скрыть кнопки)"""
     return Keyboard(one_time=True).get_json()
+
+
+def get_referral_section_keyboard() -> str:
+    """Меню раздела партнёрки"""
+    kb = Keyboard(one_time=False, inline=False)
+    kb.add(Text(VK_REFERRAL_WITHDRAW_BUTTON), color=KeyboardButtonColor.POSITIVE)
+    kb.row()
+    kb.add(Text(VK_REFERRAL_BACK_BUTTON), color=KeyboardButtonColor.NEGATIVE)
+    return kb.get_json()
+
+
+def get_admin_withdraw_complete_keyboard(request_id: int) -> str:
+    """Inline: админ подтверждает перевод по заявке"""
+    kb = Keyboard(one_time=False, inline=True)
+    kb.add(
+        Callback(
+            "✅ Завершено",
+            payload={"action": "referral_withdraw_done", "rid": request_id},
+        )
+    )
+    return kb.get_json()
 
 
 def get_aspect_ratio_keyboard(model: str) -> str:

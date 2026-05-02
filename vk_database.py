@@ -75,6 +75,28 @@ async def init_db():
 
         # Миграция: Добавляем referrer_id, если таблица создавалась ранее без него
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referrer_id BIGINT DEFAULT NULL")
+        await conn.execute(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_total_earned INTEGER NOT NULL DEFAULT 0"
+        )
+        await conn.execute(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_balance INTEGER NOT NULL DEFAULT 0"
+        )
+
+        # Заявки на вывод реферальных средств
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS withdrawal_requests
+            (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                amount INTEGER NOT NULL,
+                payment_details TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_withdrawal_requests_status ON withdrawal_requests(status)"
+        )
 
         # Таблица логов платежей
         await conn.execute("""
@@ -150,6 +172,105 @@ async def get_referrer(user_id: int) -> int:
             return await conn.fetchval("SELECT referrer_id FROM users WHERE user_id = $1", int(user_id))
     except Exception as e:
         logging.error(f"❌ VK DB get_referrer {user_id}: {e}")
+        return None
+
+
+async def get_referral_stats(user_id: int) -> tuple[int, int]:
+    """(referral_total_earned, referral_balance) для экрана партнёрки."""
+    await init_db()
+    try:
+        async with _pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT referral_total_earned, referral_balance FROM users WHERE user_id = $1",
+                int(user_id),
+            )
+            if not row:
+                return (0, 0)
+            return (int(row["referral_total_earned"] or 0), int(row["referral_balance"] or 0))
+    except Exception as e:
+        logging.error(f"❌ VK DB get_referral_stats {user_id}: {e}")
+        return (0, 0)
+
+
+async def add_referral_earnings(referrer_id: int, amount: int) -> bool:
+    """Начислить реферальные рубли (30% от пополнения приглашённого). Не трогает основной balance."""
+    if amount <= 0:
+        return True
+    await init_db()
+    try:
+        async with _pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE users SET
+                    referral_total_earned = referral_total_earned + $1,
+                    referral_balance = referral_balance + $1
+                WHERE user_id = $2
+                """,
+                int(amount),
+                int(referrer_id),
+            )
+        return True
+    except Exception as e:
+        logging.error(f"❌ VK DB add_referral_earnings {referrer_id}: {e}")
+        return False
+
+
+async def create_withdrawal_request(user_id: int, amount: int, payment_details: str) -> int | None:
+    """Создать заявку и зарезервировать сумму с referral_balance. Возвращает id заявки или None."""
+    await init_db()
+    details = (payment_details or "").strip()
+    if not details or amount <= 0:
+        return None
+    try:
+        async with _pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    """
+                    UPDATE users
+                    SET referral_balance = referral_balance - $1
+                    WHERE user_id = $2 AND referral_balance >= $1
+                    RETURNING referral_balance
+                    """,
+                    int(amount),
+                    int(user_id),
+                )
+                if not row:
+                    return None
+                req_id = await conn.fetchval(
+                    """
+                    INSERT INTO withdrawal_requests (user_id, amount, payment_details, status)
+                    VALUES ($1, $2, $3, 'pending')
+                    RETURNING id
+                    """,
+                    int(user_id),
+                    int(amount),
+                    details,
+                )
+                return int(req_id)
+    except Exception as e:
+        logging.error(f"❌ VK DB create_withdrawal_request {user_id}: {e}")
+        return None
+
+
+async def complete_withdrawal_request(request_id: int) -> tuple[int, int] | None:
+    """Пометить заявку выполненной. Возвращает (user_id, amount) или None."""
+    await init_db()
+    try:
+        async with _pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                UPDATE withdrawal_requests
+                SET status = 'completed'
+                WHERE id = $1 AND status = 'pending'
+                RETURNING user_id, amount
+                """,
+                int(request_id),
+            )
+            if not row:
+                return None
+            return (int(row["user_id"]), int(row["amount"]))
+    except Exception as e:
+        logging.error(f"❌ VK DB complete_withdrawal_request {request_id}: {e}")
         return None
 
 

@@ -320,23 +320,30 @@ async def prodamus_vk_webhook(request: web.Request):
                 f"  Ошибка: {log_err}\n{traceback.format_exc()}"
             )
 
-        # ─── 7. Реферальная система ──────────────────────────────────────
+        # ─── 7. Реферальная система (30% на реф. счёт пригласившего, не на основной баланс) ─
         referrer_id = await db.get_referrer(user_id)
         logger.info(f"[WEBHOOK] referrer_id для user={user_id}: {referrer_id}")
         bonus_text = ""
-        if referrer_id:
-            bonus_amount = max(1, int(amount * 0.1))
-            logger.info(f"[WEBHOOK] Начисляем реф. бонус {bonus_amount} руб. referrer={referrer_id}")
-            ref_ok = await db.update_balance(referrer_id, bonus_amount)
+        if referrer_id and referrer_id != user_id:
+            bonus_amount = int(amount * 0.3)
+            if bonus_amount < 1:
+                bonus_amount = 1
+            logger.info(f"[WEBHOOK] Начисляем реф. вознаграждение {bonus_amount} руб. (30%) referrer={referrer_id}")
+            await db.create_new_user(referrer_id)
+            ref_ok = await db.add_referral_earnings(referrer_id, bonus_amount)
             if not ref_ok:
-                logger.error(f"[WEBHOOK] ❌ Реферальный бонус НЕ ЗАЧИСЛЕН referrer={referrer_id}!")
-            bonus_text = f"\n\n🎁 Ваш пригласитель получил бонус {bonus_amount} руб."
-
-            asyncio.create_task(bot.api.messages.send(
-                user_id=referrer_id,
-                message=f"🎉 Вам начислен бонус {bonus_amount} руб. за пополнение баланса вашим другом!",
-                random_id=0
-            ))
+                logger.error(f"[WEBHOOK] ❌ Реферальное начисление НЕ записано referrer={referrer_id}!")
+            else:
+                total_e, avail = await db.get_referral_stats(referrer_id)
+                asyncio.create_task(bot.api.messages.send(
+                    user_id=referrer_id,
+                    message=(
+                        f"💰 Реферальное вознаграждение +{bonus_amount} руб. (30% от пополнения друга).\n"
+                        f"📊 Всего заработано с партнёрки: {total_e} руб.\n"
+                        f"💵 Доступно к выводу: {avail} руб."
+                    ),
+                    random_id=0
+                ))
 
         # ─── 8. Запускаем анимацию и отвечаем OK ─────────────────────────
         asyncio.create_task(process_delivery_animation(bot, user_id, amount, bonus_text))

@@ -630,24 +630,44 @@ class VKHandlers:
         user_id = message.from_id
         model = user_data.get("chosen_model", "nanabanana")
 
-        # Check if message has photo
-        if not message.attachments:
+        # Get photo URL from attachment
+        new_urls = []
+        logger.info(f"VK handle_photo_upload: attachments count={len(message.attachments)}")
+        for i, attachment in enumerate(message.attachments):
+            logger.info(f"VK attachment {i}: type={attachment.type}")
+            if attachment.type == "photo":
+                new_urls.append(attachment.photo.sizes[-1].url)
+            elif attachment.type == "doc" and getattr(attachment.doc, "ext", "").lower() in ["jpg", "jpeg", "png", "webp"]:
+                new_urls.append(attachment.doc.url)
+
+        temp_urls = user_data.get("temp_photo_urls", [])
+        if not new_urls and not temp_urls:
             await message.answer(
                 "⚠️ Пожалуйста, пришлите фото.",
                 keyboard=get_cancel_keyboard()
             )
             return
 
-        # Get photo URL from attachment
-        photo_urls = []
-        import logging
-        logging.info(f"VK handle_photo_upload: attachments count={len(message.attachments)}")
-        for i, attachment in enumerate(message.attachments):
-            logging.info(f"VK attachment {i}: type={attachment.type}")
-            if attachment.type == "photo":
-                photo_urls.append(attachment.photo.sizes[-1].url)
-            elif attachment.type == "doc" and getattr(attachment.doc, "ext", "").lower() in ["jpg", "jpeg", "png", "webp"]:
-                photo_urls.append(attachment.doc.url)
+        if new_urls:
+            temp_urls.extend(new_urls)
+            user_data["temp_photo_urls"] = temp_urls
+            await self.state.set_data(user_id, user_data)
+            
+            # Debounce: wait 2 seconds for potential subsequent messages
+            await asyncio.sleep(2.0)
+            
+            fresh_data = await self.state.get_data(user_id)
+            current_urls = fresh_data.get("temp_photo_urls", [])
+            
+            # If length changed, another message is processing the album
+            if len(current_urls) != len(temp_urls):
+                return
+                
+            photo_urls = current_urls
+            user_data = fresh_data
+            user_data["temp_photo_urls"] = []
+        else:
+            photo_urls = temp_urls
 
         if not photo_urls:
             await message.answer(

@@ -640,7 +640,10 @@ class VKHandlers:
 
         # Get photo URL from attachment
         photo_urls = []
-        for attachment in message.attachments:
+        import logging
+        logging.info(f"VK handle_photo_upload: attachments count={len(message.attachments)}")
+        for i, attachment in enumerate(message.attachments):
+            logging.info(f"VK attachment {i}: type={attachment.type}")
             if attachment.type == "photo":
                 photo_urls.append(attachment.photo.sizes[-1].url)
             elif attachment.type == "doc" and getattr(attachment.doc, "ext", "").lower() in ["jpg", "jpeg", "png", "webp"]:

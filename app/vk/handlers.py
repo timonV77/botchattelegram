@@ -632,13 +632,26 @@ class VKHandlers:
 
         # Get photo URL from attachment
         new_urls = []
-        logger.info(f"VK handle_photo_upload: attachments count={len(message.attachments)}")
-        for i, attachment in enumerate(message.attachments):
-            logger.info(f"VK attachment {i}: type={attachment.type}")
-            if attachment.type == "photo":
-                new_urls.append(attachment.photo.sizes[-1].url)
-            elif attachment.type == "doc" and getattr(attachment.doc, "ext", "").lower() in ["jpg", "jpeg", "png", "webp"]:
-                new_urls.append(attachment.doc.url)
+        
+        # Helper to extract from attachments list
+        def extract_attachments(attachments_list):
+            for attachment in attachments_list:
+                if attachment.type == "photo":
+                    new_urls.append(attachment.photo.sizes[-1].url)
+                elif attachment.type == "doc" and getattr(attachment.doc, "ext", "").lower() in ["jpg", "jpeg", "png", "webp"]:
+                    new_urls.append(attachment.doc.url)
+                    
+        extract_attachments(message.attachments)
+        
+        # Also check forwarded messages
+        for fwd in (message.fwd_messages or []):
+            extract_attachments(fwd.attachments)
+            
+        # Also check reply message
+        if message.reply_message:
+            extract_attachments(message.reply_message.attachments)
+            
+        logger.info(f"VK handle_photo_upload: total gathered urls count={len(new_urls)}")
 
         temp_urls = user_data.get("temp_photo_urls", [])
         if not new_urls and not temp_urls:

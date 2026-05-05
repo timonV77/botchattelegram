@@ -78,6 +78,8 @@ class GrokImagine:
                         res = _as_dict(raw_res)
                         status = res.get("status")
 
+                        logging.info(f"🤖 Grok Imagine polling: status={status}, raw_res keys={list(res.keys())}")
+
                         if status == "completed":
                             # Check for multiple outputs
                             outputs = res.get("outputs")

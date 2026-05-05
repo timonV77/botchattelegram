@@ -120,6 +120,44 @@ async def background_photo_gen(
 
         img_bytes, ext, _ = result
 
+        # Check if Grok returned multiple images
+        if model == "grok_imagine" and isinstance(img_bytes, list):
+            # Upload and send multiple photos
+            attachments = []
+            for idx, img_data in enumerate(img_bytes):
+                if not img_data or len(img_data) < 64:
+                    continue
+
+                file_ext = (ext or "jpg").lower().lstrip(".")
+                if file_ext in ("jpeg",):
+                    file_ext = "jpg"
+                if file_ext not in ("jpg", "png", "webp"):
+                    file_ext = "jpg"
+
+                photo_uploader = PhotoMessageUploader(bot.api, attachment_name=f"result_{idx}.{file_ext}")
+                attachment = await photo_uploader.upload(img_data, peer_id=user_id)
+                attachments.append(attachment)
+
+            if attachments:
+                await bot.api.messages.send(
+                    user_id=user_id,
+                    message=f"✨ Ваши изображения готовы! ({MODEL_NAMES.get(model)}) - {len(attachments)} шт.",
+                    attachment=",".join(attachments),
+                    keyboard=get_main_keyboard(user_id),
+                    random_id=0
+                )
+                await charge(user_id, model)
+                logger.info(f"✅ {len(attachments)} photos generated for VK user {user_id}")
+            else:
+                await bot.api.messages.send(
+                    user_id=user_id,
+                    message="⚠️ Пустые файлы изображений от нейросети.",
+                    keyboard=get_main_keyboard(user_id),
+                    random_id=0,
+                )
+            return
+
+        # Single image (other models)
         if not img_bytes or len(img_bytes) < 64:
             await bot.api.messages.send(
                 user_id=user_id,

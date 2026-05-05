@@ -29,7 +29,7 @@ class GrokImagine:
         prompt: str,
         image_urls: List[str] = None,
         aspect_ratio: str = "1:1",
-    ) -> Tuple[Optional[bytes], Optional[str], Optional[str]]:
+    ) -> Tuple[Optional[List[bytes]], Optional[str], Optional[str]]:
         payload_input = {
             "prompt": prompt,
             "aspect_ratio": aspect_ratio,
@@ -79,19 +79,32 @@ class GrokImagine:
                         status = res.get("status")
 
                         if status == "completed":
+                            # Check for multiple outputs
+                            outputs = res.get("outputs")
+                            if isinstance(outputs, list) and outputs:
+                                logging.info(f"🤖 Grok Imagine: received {len(outputs)} outputs")
+                                result_images = []
+                                for output in outputs:
+                                    if isinstance(output, dict):
+                                        url = output.get("url")
+                                        if url:
+                                            img_bytes, ext, mime = await _download_content_bytes(session, url)
+                                            if img_bytes:
+                                                result_images.append(img_bytes)
+
+                                if result_images:
+                                    return result_images, ext, mime
+
+                            # Fallback to single image
                             data_obj = _as_dict(res.get("data"))
                             final_url = data_obj.get("url") or res.get("url")
 
-                            if not final_url:
-                                outputs = res.get("outputs")
-                                if isinstance(outputs, list) and outputs and isinstance(outputs[0], dict):
-                                    final_url = outputs[0].get("url")
+                            if final_url:
+                                img_bytes, ext, mime = await _download_content_bytes(session, final_url)
+                                return [img_bytes] if img_bytes else None, ext, mime
 
-                            if not final_url:
-                                logging.error("❌ Grok Imagine completed без url. raw=%r", raw_res)
-                                return None, None, None
-
-                            return await _download_content_bytes(session, final_url)
+                            logging.error("❌ Grok Imagine completed без url. raw=%r", raw_res)
+                            return None, None, None
 
                         if status in ("failed", "error", "cancelled"):
                             logging.error("❌ Grok Imagine Failed: %s | raw=%r", res.get("error"), raw_res)

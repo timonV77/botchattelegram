@@ -68,7 +68,11 @@ async def generate_photo(
 
         elif model == "grok_imagine":
             engine = GrokImagine()
-            return await engine.generate(prompt, image_urls=image_urls, aspect_ratio=aspect_ratio)
+            result = await engine.generate(prompt, image_urls=image_urls, aspect_ratio=aspect_ratio)
+            # Grok returns list of images
+            if result and result[0] and isinstance(result[0], list):
+                return result[0], result[1], result[2]  # Return list as-is
+            return result
 
         elif model == "gpt5_image":
             engine = GPT5Image()

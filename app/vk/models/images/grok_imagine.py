@@ -39,6 +39,7 @@ class GrokImagine:
         # Референсные изображения (если есть)
         if image_urls:
             valid_urls = image_urls[:4]
+            logging.info(f"🤖 Grok Imagine: received {len(image_urls)} images, using {len(valid_urls)}")
             payload_input["images"] = [{"type": "url", "data": url} for url in valid_urls]
 
         payload = {

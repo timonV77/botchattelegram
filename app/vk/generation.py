@@ -48,7 +48,7 @@ async def generate_photo(
     quality: str = "1K"
 ) -> Tuple[Optional[bytes], Optional[str], Optional[str]]:
     try:
-        logging.info("--- 🛠 VK Фото-генерация: %s ---", model)
+        logging.info("--- 🛠 VK Фото-генерация: %s | image_urls count=%d ---", model, len(image_urls))
 
         if model == "nanabanana":
             engine = NanoBanana()

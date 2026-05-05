@@ -85,6 +85,7 @@ async def background_photo_gen(
 ):
     """Background photo generation task"""
     try:
+        logger.info(f"background_photo_gen: model={model} photo_urls count={len(photo_urls)}")
         # Prepare photo sources
         photo_sources = await _build_image_sources(photo_urls, force_data_uri=False)
 
@@ -630,57 +631,23 @@ class VKHandlers:
         user_id = message.from_id
         model = user_data.get("chosen_model", "nanabanana")
 
-        # Get photo URL from attachment
-        new_urls = []
-        
-        # Helper to extract from attachments list
-        def extract_attachments(attachments_list):
-            for attachment in attachments_list:
-                if attachment.type == "photo":
-                    new_urls.append(attachment.photo.sizes[-1].url)
-                elif attachment.type == "doc" and getattr(attachment.doc, "ext", "").lower() in ["jpg", "jpeg", "png", "webp"]:
-                    new_urls.append(attachment.doc.url)
-                    
-        extract_attachments(message.attachments)
-        
-        # Also check forwarded messages
-        for fwd in (message.fwd_messages or []):
-            extract_attachments(fwd.attachments)
-            
-        # Also check reply message
-        if message.reply_message:
-            extract_attachments(message.reply_message.attachments)
-            
-        logger.info(f"VK handle_photo_upload: total gathered urls count={len(new_urls)}")
-
-        temp_urls = user_data.get("temp_photo_urls", [])
-        if not new_urls and not temp_urls:
+        # Check if message has photo
+        if not message.attachments:
             await message.answer(
                 "⚠️ Пожалуйста, пришлите фото.",
                 keyboard=get_cancel_keyboard()
             )
             return
 
-        if new_urls:
-            temp_urls.extend(new_urls)
-            user_data["temp_photo_urls"] = temp_urls
-            await self.state.set_data(user_id, user_data)
-            
-            # Debounce: wait 2 seconds for potential subsequent messages
-            await asyncio.sleep(2.0)
-            
-            fresh_data = await self.state.get_data(user_id)
-            current_urls = fresh_data.get("temp_photo_urls", [])
-            
-            # If length changed, another message is processing the album
-            if len(current_urls) != len(temp_urls):
-                return
-                
-            photo_urls = current_urls
-            user_data = fresh_data
-            user_data["temp_photo_urls"] = []
-        else:
-            photo_urls = temp_urls
+        # Get photo URL from attachment
+        photo_urls = []
+        logger.info(f"VK handle_photo_upload: attachments count={len(message.attachments)}")
+        for i, attachment in enumerate(message.attachments):
+            logger.info(f"VK attachment {i}: type={attachment.type}")
+            if attachment.type == "photo":
+                photo_urls.append(attachment.photo.sizes[-1].url)
+            elif attachment.type == "doc" and getattr(attachment.doc, "ext", "").lower() in ["jpg", "jpeg", "png", "webp"]:
+                photo_urls.append(attachment.doc.url)
 
         if not photo_urls:
             await message.answer(

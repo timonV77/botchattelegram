@@ -83,7 +83,25 @@ class GrokImagine:
                         if status == "completed":
                             # Check for multiple outputs
                             outputs = res.get("outputs")
-                            logging.info(f"🤖 Grok Imagine completed: outputs type={type(outputs)}, outputs={outputs}")
+                            data_field = res.get("data")
+                            logging.info(f"🤖 Grok Imagine completed: outputs={outputs}, data type={type(data_field)}, data={data_field}")
+
+                            # Check if data contains multiple images
+                            if isinstance(data_field, list) and data_field:
+                                logging.info(f"🤖 Grok Imagine: data is list with {len(data_field)} items")
+                                result_images = []
+                                for item in data_field:
+                                    if isinstance(item, dict):
+                                        url = item.get("url")
+                                        if url:
+                                            img_bytes, ext, mime = await _download_content_bytes(session, url)
+                                            if img_bytes:
+                                                result_images.append(img_bytes)
+
+                                if result_images:
+                                    logging.info(f"🤖 Grok Imagine: returning {len(result_images)} images from data list")
+                                    return result_images, ext, mime
+
                             if isinstance(outputs, list) and outputs:
                                 logging.info(f"🤖 Grok Imagine: received {len(outputs)} outputs")
                                 result_images = []

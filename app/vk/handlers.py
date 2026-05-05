@@ -618,7 +618,7 @@ class VKHandlers:
             )
         elif model == "grok_imagine":
             await message.answer(
-                "📸 Шаг 1: Пришлите от 1 до 4 фото для обработки (в одном сообщении):",
+                "📸 Шаг 1: Пришлите 1 фото для обработки:",
                 keyboard=get_cancel_keyboard()
             )
         else:
@@ -660,8 +660,8 @@ class VKHandlers:
             )
             return
 
-        # Grok Imagine поддерживает максимум 4 фото, остальные — до 8
-        max_photos = 4 if model == "grok_imagine" else 8
+        # Grok Imagine поддерживает максимум 1 фото, остальные — до 8
+        max_photos = 1 if model == "grok_imagine" else 8
 
         # Save current photos
         user_data["photo_urls"] = photo_urls
@@ -726,7 +726,7 @@ class VKHandlers:
         user_id = message.from_id
         text = (message.text or "").strip().lower()
         model = user_data.get("chosen_model", "nanabanana")
-        max_photos = 4 if model == "grok_imagine" else 8
+        max_photos = 1 if model == "grok_imagine" else 8
 
         # Check for cancel
         if text in ("назад", "🔙 назад", "отмена"):

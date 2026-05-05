@@ -83,6 +83,17 @@ def get_cancel_keyboard() -> str:
     return kb.get_json()
 
 
+def get_photo_collection_keyboard(current_count: int, max_count: int) -> str:
+    """Клавиатура для сбора нескольких фото"""
+    kb = Keyboard(one_time=True, inline=False)
+    kb.add(Text(f"➕ Добавить еще фото ({current_count}/{max_count})"), color=KeyboardButtonColor.PRIMARY)
+    kb.row()
+    kb.add(Text("✅ Готово, продолжить"), color=KeyboardButtonColor.POSITIVE)
+    kb.row()
+    kb.add(Text("🔙 Назад"), color=KeyboardButtonColor.NEGATIVE)
+    return kb.get_json()
+
+
 def get_empty_keyboard() -> str:
     """Пустая клавиатура (скрыть кнопки)"""
     return Keyboard(one_time=True).get_json()

@@ -14,6 +14,7 @@ from app.vk.keyboards import (
     get_video_model_keyboard,
     get_cancel_keyboard,
     get_admin_keyboard,
+    get_photo_collection_keyboard,
     VK_REFERRAL_MENU_BUTTON,
     VK_REFERRAL_WITHDRAW_BUTTON,
     VK_REFERRAL_BACK_BUTTON,
@@ -350,6 +351,9 @@ class VKHandlers:
         elif state == "waiting_for_photo":
             return await self.handle_photo_upload(message, user_data)
 
+        elif state == "collecting_photos":
+            return await self.handle_photo_collection(message, user_data)
+
         elif state == "waiting_for_aspect_ratio":
             return await self.handle_aspect_ratio(message, user_data)
 
@@ -640,7 +644,7 @@ class VKHandlers:
             return
 
         # Get photo URL from attachment
-        photo_urls = []
+        photo_urls = user_data.get("photo_urls", [])
         logger.info(f"VK handle_photo_upload: attachments count={len(message.attachments)}")
         for i, attachment in enumerate(message.attachments):
             logger.info(f"VK attachment {i}: type={attachment.type}")
@@ -659,10 +663,31 @@ class VKHandlers:
         # Grok Imagine поддерживает максимум 4 фото, остальные — до 8
         max_photos = 4 if model == "grok_imagine" else 8
 
+        # Save current photos
+        user_data["photo_urls"] = photo_urls
+
+        # Show collection keyboard if not reached max
+        if len(photo_urls) < max_photos:
+            await message.answer(
+                f"📸 Фото {len(photo_urls)}/{max_photos} получено\n\n"
+                f"Вы можете добавить еще фото или продолжить с текущими.",
+                keyboard=get_photo_collection_keyboard(len(photo_urls), max_photos)
+            )
+            await self.state.set_state(user_id, "collecting_photos")
+            await self.state.set_data(user_id, user_data)
+            return
+
+        # Max photos reached, proceed automatically
         if len(photo_urls) > max_photos:
             await message.answer(f"⚠️ Вы прикрепили больше {max_photos} фото. Мы будем использовать только первые {max_photos}.")
+            user_data["photo_urls"] = photo_urls[:max_photos]
 
-        user_data["photo_urls"] = photo_urls[:max_photos]
+        await self._proceed_after_photos(message, user_data)
+
+    async def _proceed_after_photos(self, message: Message, user_data: dict):
+        """Continue workflow after collecting all photos"""
+        user_id = message.from_id
+        model = user_data.get("chosen_model", "nanabanana")
 
         if "motion" in model:
             await message.answer(
@@ -695,7 +720,75 @@ class VKHandlers:
             await self.state.set_state(user_id, "waiting_for_aspect_ratio")
 
         await self.state.set_data(user_id, user_data)
-        return
+
+    async def handle_photo_collection(self, message: Message, user_data: dict) -> str:
+        """Handle photo collection state - adding more photos or proceeding"""
+        user_id = message.from_id
+        text = (message.text or "").strip().lower()
+        model = user_data.get("chosen_model", "nanabanana")
+        max_photos = 4 if model == "grok_imagine" else 8
+
+        # Check for cancel
+        if text in ("назад", "🔙 назад", "отмена"):
+            await message.answer(
+                "❌ Операция отменена.",
+                keyboard=get_main_keyboard(user_id)
+            )
+            await self.state.clear_state(user_id)
+            return
+
+        # Check if user wants to proceed
+        if "готово" in text or "продолжить" in text:
+            await self._proceed_after_photos(message, user_data)
+            return
+
+        # Check if user wants to add more photos
+        if "добавить" in text or message.attachments:
+            # Handle new photo attachment
+            if message.attachments:
+                photo_urls = user_data.get("photo_urls", [])
+
+                for i, attachment in enumerate(message.attachments):
+                    if attachment.type == "photo":
+                        photo_urls.append(attachment.photo.sizes[-1].url)
+                    elif attachment.type == "doc" and getattr(attachment.doc, "ext", "").lower() in ["jpg", "jpeg", "png", "webp"]:
+                        photo_urls.append(attachment.doc.url)
+
+                if len(photo_urls) > max_photos:
+                    photo_urls = photo_urls[:max_photos]
+                    await message.answer(
+                        f"⚠️ Достигнут лимит {max_photos} фото. Продолжаем с {max_photos} фото.",
+                    )
+                    user_data["photo_urls"] = photo_urls
+                    await self._proceed_after_photos(message, user_data)
+                    return
+
+                user_data["photo_urls"] = photo_urls
+
+                if len(photo_urls) < max_photos:
+                    await message.answer(
+                        f"📸 Фото {len(photo_urls)}/{max_photos} получено\n\n"
+                        f"Вы можете добавить еще фото или продолжить с текущими.",
+                        keyboard=get_photo_collection_keyboard(len(photo_urls), max_photos)
+                    )
+                    await self.state.set_data(user_id, user_data)
+                else:
+                    # Max reached
+                    await self._proceed_after_photos(message, user_data)
+                return
+            else:
+                # User clicked "add more" but didn't attach photo
+                await message.answer(
+                    "📸 Пришлите фото:",
+                    keyboard=get_photo_collection_keyboard(len(user_data.get("photo_urls", [])), max_photos)
+                )
+                return
+
+        # Unknown input
+        await message.answer(
+            "⚠️ Пожалуйста, выберите действие из меню или отправьте фото.",
+            keyboard=get_photo_collection_keyboard(len(user_data.get("photo_urls", [])), max_photos)
+        )
 
     async def handle_aspect_ratio(self, message: Message, user_data: dict) -> str:
         """Handle aspect ratio selection"""

@@ -119,6 +119,7 @@ async def background_photo_gen(
             return
 
         img_bytes, ext, _ = result
+        logger.info(f"Result type for {model}: img_bytes type={type(img_bytes)}, is_list={isinstance(img_bytes, list)}")
 
         # Check if Grok returned multiple images
         if model == "grok_imagine" and isinstance(img_bytes, list):

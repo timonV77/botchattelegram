@@ -81,6 +81,7 @@ class GrokImagine:
                         if status == "completed":
                             # Check for multiple outputs
                             outputs = res.get("outputs")
+                            logging.info(f"🤖 Grok Imagine completed: outputs type={type(outputs)}, outputs={outputs}")
                             if isinstance(outputs, list) and outputs:
                                 logging.info(f"🤖 Grok Imagine: received {len(outputs)} outputs")
                                 result_images = []

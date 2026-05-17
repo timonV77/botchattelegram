@@ -1,0 +1,13 @@
+[Unit]
+Description=Run Polza balance monitor every 10 minutes
+Requires=polza-balance-monitor.service
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+AccuracySec=30s
+Persistent=true
+Unit=polza-balance-monitor.service
+
+[Install]
+WantedBy=timers.target

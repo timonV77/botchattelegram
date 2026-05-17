@@ -1,0 +1,12 @@
+[Unit]
+Description=Polza.ai balance monitor (one-shot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/botchattelegram
+ExecStart=/root/botchattelegram/venv/bin/python /root/botchattelegram/scripts/polza_balance_monitor.py
+StandardOutput=journal
+StandardError=journal

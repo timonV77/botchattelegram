@@ -28,6 +28,13 @@ from app.vk.models.video.kling_motion import _download_vk_doc_video
 from app.vk.generation import (
     has_balance, charge, generate_photo as generate, generate_video, COSTS
 )
+from app.vk.photo_delivery import (
+    request_hash,
+    cache_lookup_result,
+    deliver_multi_photos,
+    schedule_redelivery,
+    cache_cleanup_expired,
+)
 from app.services.telegram_file import get_telegram_photo_url, download_telegram_file
 import vk_database as db
 from app.config import settings
@@ -84,10 +91,58 @@ async def background_photo_gen(
     aspect_ratio: str = "1:1",
     quality: str = "1K",
 ):
-    """Background photo generation task"""
+    """Background photo generation task.
+
+    Защита от потерь фото и двойных трат на Polza:
+    1) Перед генерацией проверяем дисковый кэш (10-минутное окно дедупликации).
+    2) Сразу после успешной генерации сохраняем байты в кэш.
+    3) Upload в VK с 3 ретраями + fallback на Catbox-ссылку.
+    4) charge только после успешной доставки клиенту.
+    5) Если совсем не доставили — фоновая задача переотправки.
+    """
     try:
-        logger.info(f"background_photo_gen: model={model} photo_urls count={len(photo_urls)}")
-        # Prepare photo sources
+        # Периодически чистим устаревшие файлы кэша (без блокировки)
+        try:
+            cache_cleanup_expired()
+        except Exception:
+            pass
+
+        # Стабильный хеш запроса для дедупликации и кэша
+        try:
+            req_hash = request_hash(user_id, model, prompt, photo_urls)
+        except Exception:
+            req_hash = None
+
+        caption_ok = f"✨ Ваше изображение готово! ({MODEL_NAMES.get(model)})"
+
+        # 1) Проверяем кэш — если такой же запрос недавно генерировался,
+        # переотправляем без обращения к Polza.
+        if req_hash:
+            cached = cache_lookup_result(req_hash)
+            if cached:
+                cached_imgs, cached_ext = cached
+                logger.info(
+                    f"♻️ Reusing cached result for user={user_id} req_hash={req_hash} "
+                    f"({len(cached_imgs)} img, ext={cached_ext})"
+                )
+                ok = await deliver_multi_photos(
+                    bot, user_id, cached_imgs, cached_ext,
+                    caption=caption_ok,
+                    keyboard=get_main_keyboard(user_id),
+                    req_hash=req_hash,
+                )
+                if ok:
+                    # ВНИМАНИЕ: не делаем charge повторно — мы уже списали при первом успехе.
+                    logger.info(f"✅ Photo redelivered from cache for VK user {user_id}")
+                else:
+                    asyncio.create_task(schedule_redelivery(
+                        bot, user_id, req_hash,
+                        caption=caption_ok,
+                        keyboard=get_main_keyboard(user_id),
+                    ))
+                return
+
+        # 2) Подготавливаем источники изображений
         photo_sources = await _build_image_sources(photo_urls, force_data_uri=False)
 
         if model in ("nanabanana_pro", "seedream"):
@@ -106,8 +161,11 @@ async def background_photo_gen(
             )
             return
 
-        # Generate
-        result = await generate(image_urls=photo_sources, prompt=prompt, model=model, aspect_ratio=aspect_ratio, quality=quality)
+        # 3) Генерация в Polza
+        result = await generate(
+            image_urls=photo_sources, prompt=prompt, model=model,
+            aspect_ratio=aspect_ratio, quality=quality
+        )
 
         if not result or not result[0]:
             await bot.api.messages.send(
@@ -119,47 +177,16 @@ async def background_photo_gen(
             return
 
         img_bytes, ext, _ = result
-        logger.info(f"Result type for {model}: img_bytes type={type(img_bytes)}, is_list={isinstance(img_bytes, list)}")
 
-        # Check if Grok returned multiple images
-        if model == "grok_imagine" and isinstance(img_bytes, list):
-            # Upload and send multiple photos
-            attachments = []
-            for idx, img_data in enumerate(img_bytes):
-                if not img_data or len(img_data) < 64:
-                    continue
+        # 4) Нормализуем результат к списку байтов
+        if isinstance(img_bytes, list):
+            images = [b for b in img_bytes if b and len(b) >= 64]
+        elif isinstance(img_bytes, (bytes, bytearray)):
+            images = [bytes(img_bytes)] if len(img_bytes) >= 64 else []
+        else:
+            images = []
 
-                file_ext = (ext or "jpg").lower().lstrip(".")
-                if file_ext in ("jpeg",):
-                    file_ext = "jpg"
-                if file_ext not in ("jpg", "png", "webp"):
-                    file_ext = "jpg"
-
-                photo_uploader = PhotoMessageUploader(bot.api, attachment_name=f"result_{idx}.{file_ext}")
-                attachment = await photo_uploader.upload(img_data, peer_id=user_id)
-                attachments.append(attachment)
-
-            if attachments:
-                await bot.api.messages.send(
-                    user_id=user_id,
-                    message=f"✨ Ваши изображения готовы! ({MODEL_NAMES.get(model)}) - {len(attachments)} шт.",
-                    attachment=",".join(attachments),
-                    keyboard=get_main_keyboard(user_id),
-                    random_id=0
-                )
-                await charge(user_id, model)
-                logger.info(f"✅ {len(attachments)} photos generated for VK user {user_id}")
-            else:
-                await bot.api.messages.send(
-                    user_id=user_id,
-                    message="⚠️ Пустые файлы изображений от нейросети.",
-                    keyboard=get_main_keyboard(user_id),
-                    random_id=0,
-                )
-            return
-
-        # Single image (other models)
-        if not img_bytes or len(img_bytes) < 64:
+        if not images:
             await bot.api.messages.send(
                 user_id=user_id,
                 message="⚠️ Пустой файл изображения от нейросети.",
@@ -168,37 +195,47 @@ async def background_photo_gen(
             )
             return
 
-        ext = (ext or "jpg").lower().lstrip(".")
-        if ext in ("jpeg",):
-            ext = "jpg"
-        if ext not in ("jpg", "png", "webp"):
-            ext = "jpg"
-
-        # Для токена сообщества peer_id обязателен: иначе saveMessagesPhoto часто даёт «photo is undefined»
-        photo_uploader = PhotoMessageUploader(bot.api, attachment_name=f"result.{ext}")
-        attachment = await photo_uploader.upload(img_bytes, peer_id=user_id)
-
-        # Send result photo
-        await bot.api.messages.send(
-            user_id=user_id,
-            message=f"✨ Ваше изображение готово! ({MODEL_NAMES.get(model)})",
-            attachment=attachment,
-            keyboard=get_main_keyboard(user_id),
-            random_id=0
+        # 5) Доставка клиенту с retry и fallback
+        caption = (
+            f"✨ Ваши изображения готовы! ({MODEL_NAMES.get(model)}) - {len(images)} шт."
+            if len(images) > 1 else caption_ok
         )
 
-        # Charge user
-        await charge(user_id, model)
-        logger.info(f"✅ Photo generated for VK user {user_id}")
+        ok = await deliver_multi_photos(
+            bot, user_id, images, ext or "jpg",
+            caption=caption,
+            keyboard=get_main_keyboard(user_id),
+            req_hash=req_hash,
+        )
+
+        if ok:
+            # 6) Списываем монеты только при успешной доставке
+            await charge(user_id, model)
+            logger.info(f"✅ Photo delivered for VK user {user_id} ({len(images)} img)")
+        else:
+            # Поставлен фоновый retry — клиент уже уведомлён внутри deliver
+            logger.warning(
+                f"⚠️ Photo delivery failed for VK user {user_id}, scheduling redelivery "
+                f"(req_hash={req_hash})"
+            )
+            if req_hash:
+                asyncio.create_task(schedule_redelivery(
+                    bot, user_id, req_hash,
+                    caption=caption,
+                    keyboard=get_main_keyboard(user_id),
+                ))
 
     except Exception as e:
         logger.error(f"❌ Photo generation error: {traceback.format_exc()}")
-        await bot.api.messages.send(
-            user_id=user_id,
-            message="⚠️ Ошибка при создании фото.",
-            keyboard=get_main_keyboard(user_id),
-            random_id=0
-        )
+        try:
+            await bot.api.messages.send(
+                user_id=user_id,
+                message="⚠️ Ошибка при создании фото.",
+                keyboard=get_main_keyboard(user_id),
+                random_id=0
+            )
+        except Exception:
+            pass
 
 
 def get_mp4_duration(data: bytes) -> int:

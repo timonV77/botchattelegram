@@ -497,15 +497,35 @@ class VKHandlers:
 
         # --- Referral Logic ---
         referrer_id = None
-        
-        # 1. Check text arguments: /start 12345 or start 12345
-        parts = text.split()
-        if len(parts) > 1:
-            ref_part = parts[1].replace("ref", "")
-            if ref_part.isdigit():
-                referrer_id = int(ref_part)
 
-        # 2. Check payload (if passed via VK Mini Apps or buttons)
+        # 0. Главный источник — VK ref-параметр из ссылки vk.com/write-{group_id}?ref=user_12345
+        # Это поле приходит ТОЛЬКО при первом обращении пользователя к сообществу по такой ссылке.
+        ref_param = getattr(message, "ref", None)
+        ref_source = getattr(message, "ref_source", None)
+        if ref_param:
+            raw = str(ref_param).strip()
+            # Поддерживаем форматы: "12345", "user_12345", "ref12345"
+            if raw.lower().startswith("user_"):
+                raw = raw[5:]
+            elif raw.lower().startswith("ref"):
+                raw = raw[3:]
+            if raw.isdigit():
+                referrer_id = int(raw)
+                logger.info(
+                    f"🔗 Реферал из VK ref-ссылки: referrer={referrer_id}, "
+                    f"source={ref_source}, user={user_id}"
+                )
+
+        # 1. Fallback: текстовая команда /start 12345 или /start ref12345
+        if not referrer_id:
+            parts = text.split()
+            if len(parts) > 1:
+                ref_part = parts[1].replace("ref", "")
+                if ref_part.isdigit():
+                    referrer_id = int(ref_part)
+                    logger.info(f"🔗 Реферал из текста /start: referrer={referrer_id}, user={user_id}")
+
+        # 2. Fallback: payload (VK Mini Apps / кнопки с ref)
         payload = getattr(message, "payload", None)
         if payload and not referrer_id:
             try:
@@ -513,7 +533,12 @@ class VKHandlers:
                 ref_from_payload = payload_obj.get("ref") or payload_obj.get("referrer")
                 if str(ref_from_payload).isdigit():
                     referrer_id = int(ref_from_payload)
+                    logger.info(f"🔗 Реферал из payload: referrer={referrer_id}, user={user_id}")
             except: pass
+
+        # Защита от self-referral
+        if referrer_id == user_id:
+            referrer_id = None
 
         # Register or update in database
         try:
@@ -1217,15 +1242,31 @@ class VKHandlers:
             return
 
         invite_lines = [
-            f"🆔 Ваш ID для приглашений: {user_id}",
-            "",
-            "Попросите друга написать боту одну из команд:",
-            f"• /start {user_id}",
-            f"• /start ref{user_id}",
+            f"🆔 Ваш ID: {user_id}",
         ]
         if settings.vk_group_id:
-            invite_lines.append("")
-            invite_lines.append(f"Или откройте чат: https://vk.com/write-{settings.vk_group_id}")
+            invite_link = f"https://vk.com/write-{settings.vk_group_id}?ref=user_{user_id}"
+            invite_lines.extend([
+                "",
+                "🔗 Ваша персональная пригласительная ссылка:",
+                invite_link,
+                "",
+                "📌 Как это работает:",
+                "• Друг переходит по ссылке и пишет боту любое сообщение",
+                "• Если он у нас впервые — он автоматически закрепится за вами",
+                "• Вы получаете 30% от каждого его пополнения",
+                "",
+                "⚠️ Если друг уже писал нашему боту раньше, ссылка не сработает.",
+                "В этом случае попросите его написать команду:",
+                f"  /start {user_id}",
+            ])
+        else:
+            invite_lines.extend([
+                "",
+                "Попросите друга написать боту команду:",
+                f"  /start {user_id}",
+                f"  или /start ref{user_id}",
+            ])
 
         body = (
             "💎 Зарабатывайте вместе с Mira Promt\n\n"

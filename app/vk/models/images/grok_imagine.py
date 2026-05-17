@@ -33,6 +33,7 @@ class GrokImagine:
         payload_input = {
             "prompt": prompt,
             "aspect_ratio": aspect_ratio,
+            "num_images": 2,
             "images": [],
         }
 

@@ -145,24 +145,39 @@ def cache_cleanup_expired() -> int:
 
 async def _upload_one_to_vk(api, img_bytes: bytes, peer_id: int, ext: str, idx: int = 0) -> Optional[str]:
     """Upload одного фото в VK с retry. Возвращает attachment-строку или None."""
+    import tempfile
+    import os
+    
     last_err: Optional[Exception] = None
-    for attempt in range(1, UPLOAD_MAX_ATTEMPTS + 1):
+    
+    fd, path = tempfile.mkstemp(suffix=f".{ext}")
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            f.write(img_bytes)
+            
+        for attempt in range(1, UPLOAD_MAX_ATTEMPTS + 1):
+            try:
+                uploader = PhotoMessageUploader(api)
+                attachment = await uploader.upload(file_source=path, peer_id=peer_id)
+                if attempt > 1:
+                    logger.info(f"🔁 VK upload OK on attempt {attempt} (peer={peer_id})")
+                return attachment
+            except Exception as e:
+                last_err = e
+                wait = UPLOAD_BACKOFF_BASE * attempt
+                logger.warning(
+                    f"⚠️ VK upload failed attempt {attempt}/{UPLOAD_MAX_ATTEMPTS} "
+                    f"(peer={peer_id}, idx={idx}): {type(e).__name__}: {e}. "
+                    f"Sleep {wait:.1f}s"
+                )
+                if attempt < UPLOAD_MAX_ATTEMPTS:
+                    await asyncio.sleep(wait)
+    finally:
         try:
-            uploader = PhotoMessageUploader(api, attachment_name=f"result_{idx}.{ext}")
-            attachment = await uploader.upload(img_bytes, peer_id=peer_id)
-            if attempt > 1:
-                logger.info(f"🔁 VK upload OK on attempt {attempt} (peer={peer_id})")
-            return attachment
-        except Exception as e:
-            last_err = e
-            wait = UPLOAD_BACKOFF_BASE * attempt
-            logger.warning(
-                f"⚠️ VK upload failed attempt {attempt}/{UPLOAD_MAX_ATTEMPTS} "
-                f"(peer={peer_id}, idx={idx}): {type(e).__name__}: {e}. "
-                f"Sleep {wait:.1f}s"
-            )
-            if attempt < UPLOAD_MAX_ATTEMPTS:
-                await asyncio.sleep(wait)
+            os.remove(path)
+        except Exception:
+            pass
+            
     logger.error(
         f"❌ VK upload exhausted {UPLOAD_MAX_ATTEMPTS} attempts "
         f"for peer={peer_id} idx={idx}: {last_err}"

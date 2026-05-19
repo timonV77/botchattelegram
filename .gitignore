@@ -2,3 +2,5 @@
 /_*.py
 /_*.sh
 /_*.txt
+*log*.txt
+*.log

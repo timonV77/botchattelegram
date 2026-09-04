@@ -51,6 +51,8 @@ def get_model_keyboard() -> str:
     kb = Keyboard(one_time=True, inline=False)
     kb.add(Text("🌊 SeeDream 5.0 Lite — 26 руб."), color=KeyboardButtonColor.PRIMARY)
     kb.row()
+    kb.add(Text("🌊 SeeDream 5.0 Pro — 19 руб."), color=KeyboardButtonColor.PRIMARY)
+    kb.row()
     kb.add(Text("🤖 Grok — 14 руб."), color=KeyboardButtonColor.POSITIVE)
     kb.row()
     kb.add(Text("🧠 GPT-5 — 25 руб."), color=KeyboardButtonColor.PRIMARY)
@@ -59,7 +61,13 @@ def get_model_keyboard() -> str:
     kb.row()
     kb.add(Text("🍌 NanoBanana 2 — 28 руб."), color=KeyboardButtonColor.POSITIVE)
     kb.row()
-    kb.add(Text("💎 NanoBanana PRO — 55 руб."), color=KeyboardButtonColor.PRIMARY)
+    kb.add(Text("💎 NanoBanana PRO — 39 руб."), color=KeyboardButtonColor.PRIMARY)
+    kb.row()
+    kb.add(Text("⚡ Flux-2 Pro — 22 руб."), color=KeyboardButtonColor.POSITIVE)
+    kb.row()
+    kb.add(Text("⚡ Flux-2 Flex — 45 руб."), color=KeyboardButtonColor.POSITIVE)
+    kb.row()
+    kb.add(Text("🔮 Qwen Image 2 — 19 руб."), color=KeyboardButtonColor.PRIMARY)
     kb.row()
     kb.add(Text("🔙 Назад"), color=KeyboardButtonColor.NEGATIVE)
     return kb.get_json()
@@ -126,10 +134,10 @@ def get_aspect_ratio_keyboard(model: str) -> str:
     
     if model == "grok_imagine":
         ratios = ["1:1", "2:3", "3:2"]
-    elif model == "seedream":
+    elif model in ("seedream", "seedream_pro"):
         ratios = ["1:1", "4:3", "3:4", "16:9", "9:16", "2:3", "3:2", "21:9"]
     else:
-        # nanabanana, nanabanana_2, nanabanana_pro
+        # nanabanana, nanabanana_2, nanabanana_pro, flux2_pro, flux2_flex, qwen_image2
         ratios = ["1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "5:4", "4:5", "21:9"]
     
     # По 3 кнопки в ряд
@@ -149,7 +157,7 @@ def get_quality_keyboard(model: str) -> str:
     """Клавиатура выбора качества"""
     kb = Keyboard(one_time=True, inline=False)
     
-    if model == "seedream":
+    if model in ("seedream", "seedream_pro"):
         kb.add(Text("basic"), color=KeyboardButtonColor.SECONDARY)
         kb.add(Text("high"), color=KeyboardButtonColor.SECONDARY)
         kb.row()

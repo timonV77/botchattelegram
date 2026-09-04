@@ -6,8 +6,12 @@ import os
 from app.vk.models.images.nanabanana import NanoBanana
 from app.vk.models.images.nanabanana_pro import NanoBananaPro
 from app.vk.models.images.seedream import Seedream
+from app.vk.models.images.seedream_pro import SeedreamPro
 from app.vk.models.images.grok_imagine import GrokImagine
 from app.vk.models.images.gpt5_image import GPT5Image
+from app.vk.models.images.flux2_pro import Flux2Pro
+from app.vk.models.images.flux2_flex import Flux2Flex
+from app.vk.models.images.qwen_image import QwenImage2
 from app.vk.models.video.kling_motion import KlingMotionControl
 
 import vk_database as db
@@ -16,10 +20,14 @@ import vk_database as db
 COSTS = {
     "nanabanana": 17,
     "nanabanana_2": 28,
-    "nanabanana_pro": 55,
+    "nanabanana_pro": 39,
     "seedream": 26,
+    "seedream_pro": 19,
     "grok_imagine": 14,
     "gpt5_image": 25,
+    "flux2_pro": 22,
+    "flux2_flex": 45,
+    "qwen_image2": 19,
     "kling_motion_720": 70,   # 14р/сек * 5сек = 70р (предполагаем 5сек)
     "kling_motion_1080": 100, # 20р/сек * 5сек = 100р (предполагаем 5сек)
 }
@@ -77,6 +85,22 @@ async def generate_photo(
         elif model == "gpt5_image":
             engine = GPT5Image()
             return await engine.generate(prompt, image_urls=image_urls)
+
+        elif model == "seedream_pro":
+            engine = SeedreamPro()
+            return await engine.generate(prompt, image_urls=image_urls, aspect_ratio=aspect_ratio, quality=quality)
+
+        elif model == "flux2_pro":
+            engine = Flux2Pro()
+            return await engine.generate(prompt, image_urls=image_urls, aspect_ratio=aspect_ratio)
+
+        elif model == "flux2_flex":
+            engine = Flux2Flex()
+            return await engine.generate(prompt, image_urls=image_urls, aspect_ratio=aspect_ratio)
+
+        elif model == "qwen_image2":
+            engine = QwenImage2()
+            return await engine.generate(prompt, image_urls=image_urls, aspect_ratio=aspect_ratio)
 
         return None, None, None
     except Exception as e:

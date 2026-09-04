@@ -49,8 +49,12 @@ MODEL_NAMES = {
     "nanabanana_2": "🍌 NanoBanana 2",
     "nanabanana_pro": "💎 NanoBanana PRO",
     "seedream": "🌊 SeeDream 5.0 Lite",
+    "seedream_pro": "🌊 SeeDream 5.0 Pro",
     "grok_imagine": "🤖 Grok",
     "gpt5_image": "🧠 GPT-5",
+    "flux2_pro": "⚡ Flux-2 Pro",
+    "flux2_flex": "⚡ Flux-2 Flex",
+    "qwen_image2": "🔮 Qwen Image 2",
     "kling_motion_720": "🎬 Motion 720p",
     "kling_motion_1080": "🎬 Motion 1080p",
 }
@@ -145,7 +149,7 @@ async def background_photo_gen(
         # 2) Подготавливаем источники изображений
         photo_sources = await _build_image_sources(photo_urls, force_data_uri=False)
 
-        if model in ("nanabanana_pro", "seedream"):
+        if model in ("nanabanana_pro", "seedream", "seedream_pro"):
             photo_sources = [
                 s for s in photo_sources
                 if isinstance(s, str) and (s.startswith("http://") or s.startswith("https://"))
@@ -658,18 +662,34 @@ class VKHandlers:
 
         # Parse model from text (совпадает с кнопками из keyboards.py)
         model = None
-        if "pro" in text or "💎" in text:
+        if "pro" in text and "nanabanana" in text:
+            model = "nanabanana_pro"
+        elif "pro" in text and "💎" in text:
             model = "nanabanana_pro"
         elif "2" in text and "nanabanana" in text:
             model = "nanabanana_2"
-        elif "nanabanana" in text or "🍌" in text:
+        elif "nanabanana" in text or ("🍌" in text and "pro" not in text and "2" not in text):
             model = "nanabanana"
+        elif "🍌" in text and "2" in text:
+            model = "nanabanana_2"
+        elif "🍌" in text and "pro" in text:
+            model = "nanabanana_pro"
+        elif "💎" in text:
+            model = "nanabanana_pro"
+        elif ("seedream" in text or "🌊" in text) and "pro" in text:
+            model = "seedream_pro"
         elif "seedream" in text or "🌊" in text or "5.0" in text or "lite" in text:
             model = "seedream"
         elif "grok" in text or "🤖" in text:
             model = "grok_imagine"
         elif "gpt-5" in text or "gpt5" in text or "🧠" in text:
             model = "gpt5_image"
+        elif "flux" in text and "flex" in text:
+            model = "flux2_flex"
+        elif "flux" in text or "⚡" in text:
+            model = "flux2_pro"
+        elif "qwen" in text or "🔮" in text:
+            model = "qwen_image2"
         elif "720" in text:
             model = "kling_motion_720"
         elif "1080" in text:
@@ -908,7 +928,7 @@ class VKHandlers:
             
         await self.state.set_data(user_id, user_data)
         
-        if model in ("seedream", "nanabanana_pro", "nanabanana_2"):
+        if model in ("seedream", "seedream_pro", "nanabanana_pro", "nanabanana_2"):
             from app.vk.keyboards import get_quality_keyboard
             await message.answer(
                 "⚙️ Шаг 3: Выберите качество генерации:",
@@ -935,7 +955,7 @@ class VKHandlers:
         model = user_data.get("chosen_model", "nanabanana")
         
         if "пропустить" in text:
-            user_data["quality"] = "basic" if model == "seedream" else "1K"
+            user_data["quality"] = "basic" if model in ("seedream", "seedream_pro") else "1K"
         else:
             if "high" in text: user_data["quality"] = "high"
             elif "basic" in text: user_data["quality"] = "basic"

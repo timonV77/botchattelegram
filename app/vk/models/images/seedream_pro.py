@@ -49,6 +49,13 @@ class SeedreamPro:
 
     async def generate(self, prompt: str, image_urls=None, quality: str = "basic", aspect_ratio: str = "1:1") -> Tuple[
         Optional[bytes], Optional[str], Optional[str]]:
+        allowed_ratios = {"1:1", "4:3", "3:4", "16:9", "9:16", "2:3", "3:2"}
+        if aspect_ratio not in allowed_ratios:
+            aspect_ratio = "1:1"
+
+        if quality not in ("basic", "high"):
+            quality = "basic"
+
         payload_input = {
             "prompt": prompt,
             "aspect_ratio": aspect_ratio,

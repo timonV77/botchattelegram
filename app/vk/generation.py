@@ -92,11 +92,11 @@ async def generate_photo(
 
         elif model == "flux2_pro":
             engine = Flux2Pro()
-            return await engine.generate(prompt, image_urls=image_urls, aspect_ratio=aspect_ratio)
+            return await engine.generate(prompt, image_urls=image_urls, aspect_ratio=aspect_ratio, resolution=quality)
 
         elif model == "flux2_flex":
             engine = Flux2Flex()
-            return await engine.generate(prompt, image_urls=image_urls, aspect_ratio=aspect_ratio)
+            return await engine.generate(prompt, image_urls=image_urls, aspect_ratio=aspect_ratio, resolution=quality)
 
         elif model == "qwen_image2":
             engine = QwenImage2()

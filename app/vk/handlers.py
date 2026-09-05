@@ -149,7 +149,7 @@ async def background_photo_gen(
         # 2) Подготавливаем источники изображений
         photo_sources = await _build_image_sources(photo_urls, force_data_uri=False)
 
-        if model in ("nanabanana_pro", "seedream", "seedream_pro"):
+        if model in ("nanabanana_pro", "seedream", "seedream_pro", "flux2_pro", "flux2_flex", "qwen_image2"):
             photo_sources = [
                 s for s in photo_sources
                 if isinstance(s, str) and (s.startswith("http://") or s.startswith("https://"))
@@ -742,6 +742,11 @@ class VKHandlers:
                 "📸 Шаг 1: Пришлите 1 фото для обработки:",
                 keyboard=get_cancel_keyboard()
             )
+        elif model == "qwen_image2":
+            await message.answer(
+                "📸 Шаг 1: Пришлите от 1 до 3 фото для обработки (в одном сообщении):",
+                keyboard=get_cancel_keyboard()
+            )
         else:
             await message.answer(
                 "📸 Шаг 1: Пришлите от 1 до 8 фото для обработки (в одном сообщении):",
@@ -781,8 +786,8 @@ class VKHandlers:
             )
             return
 
-        # Grok Imagine поддерживает максимум 1 фото, остальные — до 8
-        max_photos = 1 if model == "grok_imagine" else 8
+        # Grok Imagine поддерживает максимум 1 фото, Qwen Image 2 — до 3, остальные — до 8
+        max_photos = 1 if model == "grok_imagine" else (3 if model == "qwen_image2" else 8)
 
         # Save current photos
         user_data["photo_urls"] = photo_urls
@@ -847,7 +852,7 @@ class VKHandlers:
         user_id = message.from_id
         text = (message.text or "").strip().lower()
         model = user_data.get("chosen_model", "nanabanana")
-        max_photos = 1 if model == "grok_imagine" else 8
+        max_photos = 1 if model == "grok_imagine" else (3 if model == "qwen_image2" else 8)
 
         # Check for cancel
         if text in ("назад", "🔙 назад", "отмена"):
@@ -1095,6 +1100,10 @@ class VKHandlers:
             
         if "nanabanana" in model and len(prompt) > 20000:
             await message.answer("⚠️ Ваш текст слишком длинный (максимум 20 000 символов). Пожалуйста, сократите его и отправьте заново.", keyboard=get_cancel_keyboard())
+            return
+
+        if ("flux" in model or "qwen" in model) and len(prompt) > 5000:
+            await message.answer("⚠️ Ваш текст превышает лимит в 5000 символов. Пожалуйста, сократите его и отправьте заново.", keyboard=get_cancel_keyboard())
             return
 
         # Safety final balance check (should already be covered, just fallback)

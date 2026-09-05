@@ -129,10 +129,14 @@ def get_aspect_ratio_keyboard(model: str) -> str:
     
     if model == "grok_imagine":
         ratios = ["1:1", "2:3", "3:2"]
-    elif model in ("seedream", "seedream_pro"):
+    elif model == "seedream":
         ratios = ["1:1", "4:3", "3:4", "16:9", "9:16", "2:3", "3:2", "21:9"]
+    elif model in ("seedream_pro", "flux2_pro", "flux2_flex"):
+        ratios = ["1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3"]
+    elif model == "qwen_image2":
+        ratios = ["1:1", "3:4", "4:3", "9:16", "16:9"]
     else:
-        # nanabanana, nanabanana_2, nanabanana_pro, flux2_pro, flux2_flex, qwen_image2
+        # nanabanana, nanabanana_2, nanabanana_pro
         ratios = ["1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "5:4", "4:5", "21:9"]
     
     # По 3 кнопки в ряд

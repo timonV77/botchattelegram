@@ -26,10 +26,19 @@ class Flux2Flex:
         prompt: str,
         image_urls: List[str] = None,
         aspect_ratio: str = "1:1",
+        resolution: str = "1K",
     ) -> Tuple[Optional[bytes], Optional[str], Optional[str]]:
+        allowed_ratios = {"1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3"}
+        if aspect_ratio not in allowed_ratios:
+            aspect_ratio = "1:1"
+
+        if resolution not in ("1K", "2K"):
+            resolution = "1K"
+
         payload_input = {
             "prompt": prompt,
             "aspect_ratio": aspect_ratio,
+            "image_resolution": resolution,
             "output_format": "png",
         }
         if image_urls:

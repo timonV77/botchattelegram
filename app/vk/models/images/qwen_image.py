@@ -30,6 +30,10 @@ class QwenImage2:
         image_urls: List[str] = None,
         aspect_ratio: str = "1:1",
     ) -> Tuple[Optional[bytes], Optional[str], Optional[str]]:
+        allowed_ratios = {"1:1", "3:4", "4:3", "9:16", "16:9"}
+        if aspect_ratio not in allowed_ratios:
+            aspect_ratio = "1:1"
+
         payload_input = {
             "prompt": prompt,
             "aspect_ratio": aspect_ratio,
@@ -37,7 +41,7 @@ class QwenImage2:
         }
 
         if image_urls:
-            valid_urls = image_urls[:8]
+            valid_urls = image_urls[:3]
             payload_input["images"] = [{"type": "url", "data": url} for url in valid_urls]
 
         payload = {
